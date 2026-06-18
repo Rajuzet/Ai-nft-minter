@@ -13,12 +13,12 @@ contract AINFTMinter is ERC721URIStorage, ERC2981, Ownable {
         _setDefaultRoyalty(msg.sender, 500);
     }
 
-    function mintAINFT(address recipient, string memory tokenURI) external payable returns (uint256) {
+    function mintAINFT(address recipient, string memory _tokenURI) external payable returns (uint256) {
         require(msg.value == mintFee, "AINFTMinter: incorrect mint fee");
         uint256 tokenId = nextTokenId;
         nextTokenId = tokenId + 1;
         _safeMint(recipient, tokenId);
-        _setTokenURI(tokenId, tokenURI);
+        _setTokenURI(tokenId, _tokenURI);
         return tokenId;
     }
 
@@ -28,15 +28,15 @@ contract AINFTMinter is ERC721URIStorage, ERC2981, Ownable {
         payable(owner()).transfer(balance);
     }
 
-    function _burn(uint256 tokenId) internal virtual override(ERC721, ERC721URIStorage) {
+    function _burn(uint256 tokenId) internal virtual override(ERC721URIStorage) {
         super._burn(tokenId);
     }
 
-    function tokenURI(uint256 tokenId) public view virtual override(ERC721, ERC721URIStorage) returns (string memory) {
+    function tokenURI(uint256 tokenId) public view virtual override(ERC721URIStorage) returns (string memory) {
         return ERC721URIStorage.tokenURI(tokenId);
     }
 
-    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC721, ERC2981) returns (bool) {
-        return ERC721.supportsInterface(interfaceId) || ERC2981.supportsInterface(interfaceId);
+    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC721URIStorage, ERC2981) returns (bool) {
+        return super.supportsInterface(interfaceId);
     }
 }
