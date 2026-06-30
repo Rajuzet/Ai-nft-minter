@@ -30,7 +30,7 @@ let AiStudioService = class AiStudioService {
         }
         return Buffer.concat(chunks).toString('utf-8');
     }
-    async generateArt(prompt, storage = 's3') {
+    async generateArt(prompt, storage = 's3', customMetadata) {
         if (!prompt || typeof prompt !== 'string') {
             throw new common_1.BadRequestException('A valid prompt string is required.');
         }
@@ -78,15 +78,30 @@ let AiStudioService = class AiStudioService {
             else {
                 imageUrl = await this.storageService.uploadToS3(imageBuffer, imageKey, 'image/png');
             }
-            const metadata = {
-                name: `AI Studio Collective Artwork #${Date.now()}`,
-                description: 'Institutional-grade AI-generated NFT art generated from a secure prompt.',
-                image: imageUrl,
-                attributes: [
+            const metadataName = customMetadata?.name || `WCOS Artwork #${Date.now()}`;
+            const metadataDesc = customMetadata?.description || 'Institutional-grade AI-generated NFT art generated from a secure WCOS prompt.';
+            const metadataCategory = customMetadata?.category || 'Art';
+            const metadataRoyalty = customMetadata?.royaltyPercentage ?? 5;
+            const metadataExternalUrl = customMetadata?.externalUrl || 'https://wcos.io';
+            const metadataUnlockable = customMetadata?.unlockableContent || '';
+            const formattedAttributes = customMetadata?.traits && customMetadata.traits.length > 0
+                ? customMetadata.traits.map(t => ({ trait_type: t.traitType, value: t.value }))
+                : [
                     { trait_type: 'Generation Engine', value: 'amazon.titan-image-generator-v2:0' },
                     { trait_type: 'Prompt', value: prompt },
                     { trait_type: 'Storage Type', value: storage.toUpperCase() }
-                ],
+                ];
+            const metadata = {
+                name: metadataName,
+                description: metadataDesc,
+                image: imageUrl,
+                external_url: metadataExternalUrl,
+                seller_fee_basis_points: metadataRoyalty * 100,
+                attributes: formattedAttributes,
+                properties: {
+                    category: metadataCategory,
+                    unlockable_content: metadataUnlockable
+                }
             };
             let metadataUrl;
             const metadataKey = `metadata/${Date.now()}-${crypto.randomUUID()}.json`;

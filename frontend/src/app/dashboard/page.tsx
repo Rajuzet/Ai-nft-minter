@@ -8,7 +8,7 @@ import {
   Terminal, ShieldAlert, Cpu, Layers, Coins, Compass, Users, Rocket, Code2, 
   Wallet, RefreshCw, Send, CheckCircle2, ChevronRight, Activity, Sparkles, 
   Sliders, Play, Trash2, Image as ImageIcon, Video, Music, Box, Settings, 
-  Database, Plus, Eye, ListFilter, Percent
+  Database, Plus, Eye, ListFilter, Percent, Globe, AlertTriangle
 } from "lucide-react";
 import ChatAssistant from "../../components/assistant/ChatAssistant";
 
@@ -28,9 +28,27 @@ interface CustomTrait {
   rarity: string;
 }
 
+interface DraftAsset {
+  id: string;
+  imageUrl: string;
+  metadataUrl: string;
+  prompt: string;
+  name: string;
+  description: string;
+  category: string;
+  royalty: number;
+  externalUrl: string;
+  unlockableContent: string;
+  traits: CustomTrait[];
+  status: "DRAFT" | "MINTED" | "MINTING";
+  txHash?: string;
+  timestamp: string;
+}
+
 export default function DashboardPage() {
   const { address, isConnected, chain } = useAccount();
   const [activeModule, setActiveModule] = useState<string>("home");
+  const [selectedChain, setSelectedChain] = useState<string>("base-sepolia");
   
   // Terminal activity logs
   const [terminalLogs, setTerminalLogs] = useState<string[]>([
@@ -46,6 +64,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (isConnected && address) {
       addTerminalLog(`Wallet connected: ${address.slice(0, 10)}...${address.slice(-8)} on ${chain?.name || "EVM Chain"}`);
+      setSelectedChain(chain?.id === 8453 ? "base-mainnet" : "base-sepolia");
     } else {
       addTerminalLog("Wallet disconnected or session expired.");
     }
@@ -60,6 +79,15 @@ export default function DashboardPage() {
   const [prompt, setPrompt] = useState("");
   const [selectedStyle, setSelectedStyle] = useState("cyberpunk");
   const [storageDriver, setStorageDriver] = useState<'s3' | 'ipfs'>('s3');
+  
+  // Metadata Form State
+  const [nftName, setNftName] = useState("");
+  const [nftDescription, setNftDescription] = useState("");
+  const [nftCategory, setNftCategory] = useState("art");
+  const [nftRoyalty, setNftRoyalty] = useState(5);
+  const [nftExternalUrl, setNftExternalUrl] = useState("");
+  const [nftUnlockable, setNftUnlockable] = useState("");
+
   const [metadataUrl, setMetadataUrl] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [aiStatus, setAiStatus] = useState("Ready.");
@@ -71,6 +99,19 @@ export default function DashboardPage() {
   const [audioTempo, setAudioTempo] = useState("120");
   const [audioGenre, setAudioGenre] = useState("synthwave");
   const [meshFormat, setMeshFormat] = useState(".glb");
+
+  // Custom traits list
+  const [traitsList, setTraitsList] = useState<CustomTrait[]>([
+    { traitType: "Background", value: "Cyberpunk City Grid", rarity: "10%" },
+    { traitType: "Eyewear", value: "Neon Visor", rarity: "5%" }
+  ]);
+  const [newTraitType, setNewTraitType] = useState("");
+  const [newTraitValue, setNewTraitValue] = useState("");
+  const [newTraitRarity, setNewTraitRarity] = useState("10%");
+
+  // Drafts & Creator Gallery
+  const [draftAssets, setDraftAssets] = useState<DraftAsset[]>([]);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
 
   const contractAddress = process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS;
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
@@ -93,18 +134,54 @@ export default function DashboardPage() {
   const { isLoading: isWaitingForTx, isSuccess: isMintSuccess } = useWaitForTransactionReceipt({ hash: mintHash });
 
   useEffect(() => {
-    if (isMintSuccess) {
+    if (isMintSuccess && mintHash) {
       addTerminalLog(`Successfully minted AI NFT on-chain. Tx: ${mintHash}`);
       setAiStatus("NFT Minted successfully!");
+      
+      // Update local draft/gallery status
+      setDraftAssets(prev =>
+        prev.map(asset => {
+          if (asset.id === selectedDraftId || (selectedDraftId === null && asset.metadataUrl === metadataUrl)) {
+            return { ...asset, status: "MINTED", txHash: mintHash };
+          }
+          return asset;
+        })
+      );
     }
-  }, [isMintSuccess]);
+  }, [isMintSuccess, mintHash]);
 
   useEffect(() => {
     if (mintError) {
       addTerminalLog(`Minting transaction rejected or failed: ${mintError.message}`);
       setAiStatus("Minting failed.");
+      
+      setDraftAssets(prev =>
+        prev.map(asset => {
+          if (asset.id === selectedDraftId) {
+            return { ...asset, status: "DRAFT" };
+          }
+          return asset;
+        })
+      );
     }
   }, [mintError]);
+
+  const addCustomTrait = () => {
+    if (!newTraitType.trim() || !newTraitValue.trim()) return;
+    setTraitsList(prev => [...prev, {
+      traitType: newTraitType.trim(),
+      value: newTraitValue.trim(),
+      rarity: newTraitRarity.trim()
+    }]);
+    setNewTraitType("");
+    setNewTraitValue("");
+    addTerminalLog(`Added trait: ${newTraitType} = ${newTraitValue}`);
+  };
+
+  const removeCustomTrait = (index: number) => {
+    setTraitsList(prev => prev.filter((_, i) => i !== index));
+    addTerminalLog("Removed trait attribute.");
+  };
 
   const generateArt = async () => {
     if (!prompt.trim()) {
@@ -115,7 +192,6 @@ export default function DashboardPage() {
     setAiStatus(`Generating ${aiStudioSubTab}...`);
     addTerminalLog(`Requesting multi-modal (${aiStudioSubTab}) generation via driver: ${storageDriver.toUpperCase()}`);
 
-    // If generating image, invoke backend Titan image model
     if (aiStudioSubTab === 'image') {
       const styleSuffixes: Record<string, string> = {
         cyberpunk: ", cyberpunk aesthetic, neon lights, high tech, futuristic, 8k resolution",
@@ -131,7 +207,19 @@ export default function DashboardPage() {
         const response = await fetch(`${backendUrl}/api/v1/ai/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: fullPrompt, storage: storageDriver })
+          body: JSON.stringify({
+            prompt: fullPrompt,
+            storage: storageDriver,
+            customMetadata: {
+              name: nftName || undefined,
+              description: nftDescription || undefined,
+              category: nftCategory,
+              traits: traitsList.map(t => ({ traitType: t.traitType, value: t.value })),
+              royaltyPercentage: Number(nftRoyalty),
+              externalUrl: nftExternalUrl || undefined,
+              unlockableContent: nftUnlockable || undefined
+            }
+          })
         });
 
         const data = await response.json();
@@ -141,6 +229,25 @@ export default function DashboardPage() {
         setImageUrl(data.imageUrl);
         setAiStatus(`Art generated & saved on ${storageDriver.toUpperCase()}! Ready to mint.`);
         addTerminalLog(`Art saved on ${storageDriver.toUpperCase()}: ${data.imageUrl}`);
+
+        // Add to drafts list
+        const newDraft: DraftAsset = {
+          id: crypto.randomUUID(),
+          imageUrl: data.imageUrl,
+          metadataUrl: data.metadataUrl,
+          prompt: fullPrompt,
+          name: nftName || `AI Artwork #${Date.now()}`,
+          description: nftDescription || "WCOS Custom AI Asset",
+          category: nftCategory,
+          royalty: nftRoyalty,
+          externalUrl: nftExternalUrl,
+          unlockableContent: nftUnlockable,
+          traits: [...traitsList],
+          status: "DRAFT",
+          timestamp: new Date().toLocaleTimeString()
+        };
+        setDraftAssets(prev => [newDraft, ...prev]);
+
       } catch (err: any) {
         console.error(err);
         setAiStatus("Generation failed. Check server connectivity.");
@@ -149,32 +256,44 @@ export default function DashboardPage() {
         setIsGenerating(false);
       }
     } else {
-      // Mock other multi-modal generators for high-fidelity interactive experience
+      // Mock other multi-modal generators
       setTimeout(() => {
         setIsGenerating(false);
         setAiStatus(`${aiStudioSubTab.toUpperCase()} generated and saved on ${storageDriver.toUpperCase()}!`);
         addTerminalLog(`Mock ${aiStudioSubTab.toUpperCase()} generation success. File stored on ${storageDriver.toUpperCase()}`);
-        if (aiStudioSubTab === 'video') {
-          setImageUrl("https://wcos-nft-assets.s3.amazonaws.com/mock-assets/cyberpunk-animation.gif");
-          setMetadataUrl(`https://ipfs.io/ipfs/QmMockVideoMetadata-${Date.now()}`);
-        } else if (aiStudioSubTab === 'audio') {
-          setImageUrl("https://wcos-nft-assets.s3.amazonaws.com/mock-assets/audio-visualizer.png");
-          setMetadataUrl(`https://ipfs.io/ipfs/QmMockAudioMetadata-${Date.now()}`);
-        } else if (aiStudioSubTab === '3d') {
-          setImageUrl("https://wcos-nft-assets.s3.amazonaws.com/mock-assets/mesh-cube.png");
-          setMetadataUrl(`https://ipfs.io/ipfs/QmMockMeshMetadata-${Date.now()}`);
-        }
+        
+        let mockImageUrl = "";
+        if (aiStudioSubTab === 'video') mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/cyberpunk-animation.gif";
+        else if (aiStudioSubTab === 'audio') mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/audio-visualizer.png";
+        else if (aiStudioSubTab === '3d') mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/mesh-cube.png";
+
+        const mockMetaUrl = `https://ipfs.io/ipfs/QmMockMetadata-${Date.now()}`;
+        setImageUrl(mockImageUrl);
+        setMetadataUrl(mockMetaUrl);
+
+        const newDraft: DraftAsset = {
+          id: crypto.randomUUID(),
+          imageUrl: mockImageUrl,
+          metadataUrl: mockMetaUrl,
+          prompt: prompt,
+          name: nftName || `AI ${aiStudioSubTab.toUpperCase()} #${Date.now()}`,
+          description: nftDescription || "WCOS Multi-modal Asset",
+          category: nftCategory,
+          royalty: nftRoyalty,
+          externalUrl: nftExternalUrl,
+          unlockableContent: nftUnlockable,
+          traits: [...traitsList],
+          status: "DRAFT",
+          timestamp: new Date().toLocaleTimeString()
+        };
+        setDraftAssets(prev => [newDraft, ...prev]);
       }, 2000);
     }
   };
 
-  const handleMint = () => {
+  const handleMintDraft = (draft: DraftAsset) => {
     if (!isConnected || !address) {
       addTerminalLog("Wallet not connected.");
-      return;
-    }
-    if (!metadataUrl) {
-      addTerminalLog("No metadata found. Generate art first.");
       return;
     }
     if (!contractAddress || contractAddress.startsWith("0xYour")) {
@@ -182,12 +301,24 @@ export default function DashboardPage() {
       return;
     }
 
-    addTerminalLog("Initiating on-chain minting on Base...");
+    setSelectedDraftId(draft.id);
+    addTerminalLog(`Initiating minting for draft ${draft.name} on contract ${contractAddress}...`);
+    
+    // Update draft status to MINTING
+    setDraftAssets(prev =>
+      prev.map(asset => {
+        if (asset.id === draft.id) {
+          return { ...asset, status: "MINTING" };
+        }
+        return asset;
+      })
+    );
+
     writeContract({
       address: contractAddress as `0x${string}`,
       abi: contractAbi,
       functionName: "mintAINFT",
-      args: [address, metadataUrl],
+      args: [address, draft.metadataUrl],
       value: parseEther("0.005")
     });
   };
@@ -195,7 +326,7 @@ export default function DashboardPage() {
   // ----------------------------------------------------
   // Module 2: Contract Builder State & Handlers
   // ----------------------------------------------------
-  const [contractType, setContractType] = useState<"ERC-20" | "ERC-721" | "ERC-1155">("ERC-20");
+  const [contractType, setContractType] = useState<"ERC-20" | "ERC-721" | "ERC-1155">("ERC-721");
   const [contractName, setContractName] = useState("");
   const [contractSymbol, setContractSymbol] = useState("");
   const [tokenDecimals, setTokenDecimals] = useState(18);
@@ -283,75 +414,24 @@ export default function DashboardPage() {
     }, 2000);
   };
 
-  // ----------------------------------------------------
-  // Module 3: NFT Studio (Collection & Traits)
-  // ----------------------------------------------------
-  const [collectionName, setCollectionName] = useState("Base Wanderers");
-  const [collectionSymbol, setCollectionSymbol] = useState("WAND");
-  const [collectionDesc, setCollectionDesc] = useState("A custom premium visual collection generated on WCOS.");
-  const [collectionRoyalty, setCollectionRoyalty] = useState(5);
-  const [collectionCategory, setCollectionCategory] = useState("art");
-  
-  // Custom traits list
-  const [traitsList, setTraitsList] = useState<CustomTrait[]>([
-    { traitType: "Background", value: "Cyberpunk City Grid", rarity: "10%" },
-    { traitType: "Eyewear", value: "Neon Visor", rarity: "5%" }
-  ]);
-  const [newTraitType, setNewTraitType] = useState("");
-  const [newTraitValue, setNewTraitValue] = useState("");
-  const [newTraitRarity, setNewTraitRarity] = useState("10%");
-
-  const [packagedMetadataUrl, setPackagedMetadataUrl] = useState("");
-  const [isBuildingMetadata, setIsBuildingMetadata] = useState(false);
-
-  const addCustomTrait = () => {
-    if (!newTraitType.trim() || !newTraitValue.trim()) return;
-    setTraitsList(prev => [...prev, {
-      traitType: newTraitType.trim(),
-      value: newTraitValue.trim(),
-      rarity: newTraitRarity.trim()
-    }]);
-    setNewTraitType("");
-    setNewTraitValue("");
-    addTerminalLog(`Added collection trait attribute: ${newTraitType} = ${newTraitValue}`);
-  };
-
-  const removeCustomTrait = (index: number) => {
-    setTraitsList(prev => prev.filter((_, i) => i !== index));
-    addTerminalLog("Removed collection trait attribute.");
-  };
-
-  // Generate live JSON Schema for NFT Metadata
+  // Compile live JSON metadata schema for preview
   const compileLiveMetadata = () => {
     return JSON.stringify({
-      name: `${collectionName} #001`,
-      symbol: collectionSymbol,
-      description: collectionDesc,
+      name: nftName || "Artwork #001",
+      description: nftDescription || "WCOS Asset Description",
       image: imageUrl || "ipfs://QmPlaceholderImageHash",
-      external_url: "https://wcos.io/studio",
-      seller_fee_basis_points: collectionRoyalty * 100,
+      external_url: nftExternalUrl || "https://wcos.io",
+      seller_fee_basis_points: nftRoyalty * 100,
       fee_recipient: address || "0x0000000000000000000000000000000000000000",
       attributes: traitsList.map(t => ({
         trait_type: t.traitType,
-        value: t.value,
-        rarity: t.rarity
+        value: t.value
       })),
       properties: {
-        category: collectionCategory,
-        creator: address || "0x000"
+        category: nftCategory,
+        unlockable_content: nftUnlockable
       }
     }, null, 2);
-  };
-
-  const packageCollectionMetadata = () => {
-    setIsBuildingMetadata(true);
-    addTerminalLog("Packaging collection schema and traits...");
-    setTimeout(() => {
-      setIsBuildingMetadata(false);
-      const mockCid = "Qm" + Array.from({ length: 44 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-      setPackagedMetadataUrl(`https://ipfs.io/ipfs/${mockCid}`);
-      addTerminalLog(`Successfully packaged & uploaded collection metadata to IPFS: ipfs://${mockCid}`);
-    }, 1500);
   };
 
   // Apply AI configured parameters for AI NFT Studio (ERC721)
@@ -360,90 +440,10 @@ export default function DashboardPage() {
     if (params) {
       setPrompt(params.prompt || "");
       setSelectedStyle(params.style || "cyberpunk");
-      setCollectionName(params.name || "Cyberpunk Wanderers");
-      setCollectionSymbol(params.symbol || "CYBER");
+      setNftName(params.name || "Cyberpunk Wanderers");
       addTerminalLog(`AI Assistant pre-configured Studio params: prompt: "${params.prompt}"`);
     }
   }, [autoConfigParams]);
-
-  // ----------------------------------------------------
-  // Module 4: DeFi Swap Simulator
-  // ----------------------------------------------------
-  const [swapFromAmount, setSwapFromAmount] = useState("1.0");
-  const [swapToAmount, setSwapToAmount] = useState("200.0");
-  const [isSwapping, setIsSwapping] = useState(false);
-
-  const calculateSwap = (val: string) => {
-    setSwapFromAmount(val);
-    const numeric = parseFloat(val) || 0;
-    setSwapToAmount((numeric * 200).toFixed(2));
-  };
-
-  const executeSwap = () => {
-    if (!isConnected) {
-      addTerminalLog("Swap failed: Please connect wallet.");
-      return;
-    }
-    setIsSwapping(true);
-    addTerminalLog(`Swapping ${swapFromAmount} ETH to WCOS Token...`);
-    setTimeout(() => {
-      setIsSwapping(false);
-      addTerminalLog(`Swap executed successfully! Added ${swapToAmount} WCOS to wallet balance.`);
-    }, 1500);
-  };
-
-  // ----------------------------------------------------
-  // Module 5: DAO Builder
-  // ----------------------------------------------------
-  const [proposals, setProposals] = useState([
-    { id: 1, title: "WIP-01: Establish Creator Royalty Pool", votesFor: 1250, votesAgainst: 120, status: "Active" },
-    { id: 2, title: "WIP-02: Integrate Arweave Permanent Storage Service", votesFor: 3400, votesAgainst: 50, status: "Passed" },
-    { id: 3, title: "WIP-03: Distribute 100,000 WCOS Community Airdrop", votesFor: 890, votesAgainst: 910, status: "Defeated" }
-  ]);
-
-  const handleVote = (proposalId: number, voteType: "for" | "against") => {
-    setProposals(prev =>
-      prev.map(p => {
-        if (p.id === proposalId) {
-          return {
-            ...p,
-            votesFor: voteType === "for" ? p.votesFor + 100 : p.votesFor,
-            votesAgainst: voteType === "against" ? p.votesAgainst + 100 : p.votesAgainst
-          };
-        }
-        return p;
-      })
-    );
-    addTerminalLog(`Vote recorded for Proposal #${proposalId}`);
-  };
-
-  // ----------------------------------------------------
-  // Module 6: Token Launchpad & Tokenomics
-  // ----------------------------------------------------
-  const [launchpadTotalSupply, setLaunchpadTotalSupply] = useState(1000000);
-  const [pubSalePct, setPubSalePct] = useState(50);
-  const [teamPct, setTeamPct] = useState(20);
-  const [liquidityPct, setLiquidityPct] = useState(15);
-  const [stakingPct, setStakingPct] = useState(15);
-
-  const adjustTokenomics = (type: "pub" | "team" | "liq" | "stake", val: number) => {
-    if (type === "pub") setPubSalePct(val);
-    else if (type === "team") setTeamPct(val);
-    else if (type === "liq") setLiquidityPct(val);
-    else if (type === "stake") setStakingPct(val);
-  };
-
-  // ----------------------------------------------------
-  // Module 7: Developer Portal
-  // ----------------------------------------------------
-  const [apiKeys, setApiKeys] = useState<string[]>([]);
-  const generateApiKey = () => {
-    const key = "wcos_live_" + Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-    setApiKeys(prev => [key, ...prev]);
-    addTerminalLog("Created new developer API key.");
-  };
-
-  const isMintProcessActive = isMinting || isWaitingForTx;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -469,18 +469,27 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* System metrics & Wallet status */}
+        {/* Global Selectors */}
         <div className="flex items-center gap-4">
-          <div className="hidden md:flex items-center gap-4 text-xs text-slate-400 font-mono border-r border-white/5 pr-4">
-            <div className="flex items-center gap-1.5">
-              <Activity className="h-3.5 w-3.5 text-cyan-400" />
-              <span>Gas: 0.1 Gwei (Base)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <ShieldAlert className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Shield: Active</span>
-            </div>
+          {/* Chain Selector UI */}
+          <div className="flex items-center gap-1 bg-slate-900 border border-white/10 p-1.5 rounded-full text-xs">
+            <Globe className="h-3.5 w-3.5 text-indigo-400 ml-1.5" />
+            <select
+              value={selectedChain}
+              onChange={(e) => {
+                setSelectedChain(e.target.value);
+                addTerminalLog(`Chain switched to: ${e.target.value.toUpperCase()}`);
+              }}
+              className="bg-transparent text-white text-[11px] font-bold outline-none pr-2 cursor-pointer"
+            >
+              <option value="base-sepolia" className="bg-slate-950">Base Sepolia</option>
+              <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
+              <option value="ethereum" className="bg-slate-950">Ethereum</option>
+              <option value="polygon" className="bg-slate-950">Polygon</option>
+              <option value="arbitrum" className="bg-slate-950">Arbitrum</option>
+            </select>
           </div>
+
           <ConnectButton showBalance={false} chainStatus="icon" />
         </div>
       </header>
@@ -502,7 +511,7 @@ export default function DashboardPage() {
               }`}
             >
               <span className="flex items-center gap-2.5">
-                <Cpu className="h-4 w-4" /> Core OS Dashboard
+                <Cpu className="h-4 w-4" /> Creator Dashboard
               </span>
               <ChevronRight className="h-3 w-3 opacity-60" />
             </button>
@@ -522,20 +531,6 @@ export default function DashboardPage() {
             </button>
 
             <button
-              onClick={() => setActiveModule("nft-studio")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "nft-studio"
-                  ? "bg-violet-600/10 text-violet-400 border border-violet-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <ImageIcon className="h-4 w-4" /> NFT Studio Creator
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
               onClick={() => setActiveModule("contract-builder")}
               className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
                 activeModule === "contract-builder"
@@ -548,74 +543,18 @@ export default function DashboardPage() {
               </span>
               <ChevronRight className="h-3 w-3 opacity-60" />
             </button>
-
-            <button
-              onClick={() => setActiveModule("defi-center")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "defi-center"
-                  ? "bg-amber-600/10 text-amber-400 border border-amber-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Coins className="h-4 w-4" /> DeFi & Asset Swap
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => setActiveModule("dao-builder")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "dao-builder"
-                  ? "bg-teal-600/10 text-teal-400 border border-teal-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Users className="h-4 w-4" /> DAO Governance
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => setActiveModule("token-launchpad")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "token-launchpad"
-                  ? "bg-rose-600/10 text-rose-400 border border-rose-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Rocket className="h-4 w-4" /> Token Launchpad
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => setActiveModule("developer-portal")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "developer-portal"
-                  ? "bg-emerald-600/10 text-emerald-400 border border-emerald-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Code2 className="h-4 w-4" /> Developer Portal
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
           </div>
 
-          {/* Quick Stats Widget */}
+          {/* Connected session indicator */}
           <div className="rounded-2xl border border-white/5 bg-slate-900/20 p-3 space-y-2">
             <div className="flex items-center gap-1.5 text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-              <Wallet className="h-3 w-3" /> Connected Wallet
+              <Wallet className="h-3 w-3" /> Selected Network
             </div>
-            <p className="text-[10px] font-mono text-indigo-300 truncate">
-              {address ? address : "No wallet session"}
+            <p className="text-[10px] font-mono text-indigo-300 truncate uppercase">
+              {selectedChain}
             </p>
             <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-              <div className="h-full bg-cyan-400 rounded-full" style={{ width: isConnected ? "100%" : "0%" }} />
+              <div className="h-full bg-cyan-400 rounded-full w-full" />
             </div>
           </div>
         </aside>
@@ -623,77 +562,131 @@ export default function DashboardPage() {
         {/* Central Workspace Window */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
           
-          {/* Module 1: Home Dashboard Panel */}
+          {/* Module 1: Creator Dashboard Panel */}
           {activeModule === "home" && (
             <div className="space-y-6 animate-fade-in">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-2xl font-bold tracking-tight text-white">System Console</h2>
-                  <p className="text-slate-400 text-xs mt-1">Real-time resource diagnostics and network deployments monitors.</p>
+                  <h2 className="text-2xl font-bold tracking-tight text-white">Creator Dashboard</h2>
+                  <p className="text-slate-400 text-xs mt-1">Review active token deployments, transaction logs, and generated NFT assets.</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                  <span className="text-xs text-slate-400 font-mono">Kernel state: READY</span>
+                <div className="flex items-center gap-2 bg-slate-900/60 border border-white/5 rounded-full px-3 py-1 text-xs font-mono text-slate-400">
+                  <Activity className="h-3.5 w-3.5 text-cyan-400" />
+                  <span>Chain: {selectedChain.toUpperCase()}</span>
                 </div>
               </div>
 
-              {/* Top Row Cards */}
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-2xl border border-white/5 bg-slate-900/20 p-4">
-                  <span className="text-[10px] text-slate-500 uppercase font-bold block">Creator TVL</span>
-                  <span className="text-2xl font-bold text-white block mt-1">$432,950.00</span>
-                  <span className="text-[9px] text-emerald-400 font-semibold block mt-1">+12.4% vs last week</span>
-                </div>
-                <div className="rounded-2xl border border-white/5 bg-slate-900/20 p-4">
-                  <span className="text-[10px] text-slate-500 uppercase font-bold block">Mock Yield Earned</span>
-                  <span className="text-2xl font-bold text-cyan-400 block mt-1">45.25 ETH</span>
-                  <span className="text-[9px] text-slate-500 block mt-1">Staking & Creator royalties</span>
-                </div>
-                <div className="rounded-2xl border border-white/5 bg-slate-900/20 p-4">
-                  <span className="text-[10px] text-slate-500 uppercase font-bold block">Active Collections</span>
-                  <span className="text-2xl font-bold text-white block mt-1">8</span>
-                  <span className="text-[9px] text-indigo-400 font-semibold block mt-1">Base Network</span>
-                </div>
-                <div className="rounded-2xl border border-white/5 bg-slate-900/20 p-4">
-                  <span className="text-[10px] text-slate-500 uppercase font-bold block">Wallet Approvals</span>
-                  <span className="text-2xl font-bold text-emerald-400 block mt-1">Secured</span>
-                  <span className="text-[9px] text-emerald-400 font-semibold block mt-1">Approval Manager Active</span>
-                </div>
+              {/* Creator Gallery Grid */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Asset Creator Gallery</h3>
+                
+                {draftAssets.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center p-12 border border-dashed border-white/10 rounded-3xl text-slate-500">
+                    <ImageIcon className="h-12 w-12 mb-3 text-slate-600" />
+                    <p className="text-sm font-semibold">No assets in this gallery yet.</p>
+                    <p className="text-xs text-slate-500 mt-1">Use the AI Creator Studio module to synthesize custom image, audio, or video assets.</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                    {draftAssets.map((asset) => (
+                      <div key={asset.id} className="rounded-2xl border border-white/5 bg-slate-900/30 overflow-hidden flex flex-col justify-between shadow-lg">
+                        <div>
+                          {/* Visual element */}
+                          <div className="relative aspect-square bg-slate-950">
+                            <img src={asset.imageUrl} alt={asset.name} className="h-full w-full object-cover" />
+                            <span className={`absolute top-3 right-3 rounded-full border px-2.5 py-0.5 text-[9px] font-bold ${
+                              asset.status === 'MINTED' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                              asset.status === 'MINTING' ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' :
+                              'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            }`}>
+                              {asset.status}
+                            </span>
+                          </div>
+
+                          {/* Info panel */}
+                          <div className="p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-sm font-bold text-white truncate max-w-[150px]">{asset.name}</h4>
+                              <span className="rounded bg-white/5 px-2 py-0.5 text-[8px] text-slate-400 uppercase font-mono">{asset.category}</span>
+                            </div>
+                            <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{asset.description}</p>
+                            
+                            {/* Traits */}
+                            {asset.traits.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                {asset.traits.slice(0, 3).map((t, idx) => (
+                                  <span key={idx} className="rounded-lg bg-slate-950 px-2 py-0.5 text-[8px] text-cyan-300 font-mono">
+                                    {t.traitType}: {t.value}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="p-4 border-t border-white/5 bg-slate-900/10 flex flex-col gap-2">
+                          {asset.status === "DRAFT" ? (
+                            <button
+                              onClick={() => handleMintDraft(asset)}
+                              className="w-full rounded-full bg-indigo-600 hover:bg-indigo-500 py-2 text-xs font-semibold text-white transition-all duration-200"
+                            >
+                              Mint NFT on Base
+                            </button>
+                          ) : asset.status === "MINTING" ? (
+                            <div className="w-full flex items-center justify-center gap-1.5 text-xs text-cyan-400 py-2 font-semibold">
+                              <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Publishing on-chain...
+                            </div>
+                          ) : (
+                            <div className="w-full space-y-1.5">
+                              <div className="flex items-center justify-center gap-1 text-xs text-emerald-400 py-1 font-semibold">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Minted Successfully
+                              </div>
+                              {asset.txHash && (
+                                <p className="text-[9px] font-mono text-slate-500 text-center truncate">
+                                  Tx: {asset.txHash}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Bottom Row grid */}
-              <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+              <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
                 {/* Deployed Contract Records */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white mb-4">Workspace Smart Contracts</h3>
-                    {deployedContracts.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl text-slate-500">
-                        <Code2 className="h-8 w-8 mb-2" />
-                        <p className="text-xs">No user-deployed contracts registered in this workspace yet.</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {deployedContracts.map((c, i) => (
-                          <div key={i} className="flex items-center justify-between p-3.5 bg-slate-950/60 rounded-2xl border border-white/5 text-xs">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-white">{c.name}</span>
-                                <span className="rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-[9px] text-indigo-400">
-                                  {c.type}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 mt-1 font-mono">{c.address}</p>
+                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6">
+                  <h3 className="text-sm font-bold text-white mb-4">Deployed Contracts Registry</h3>
+                  {deployedContracts.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl text-slate-500 text-center">
+                      <Code2 className="h-8 w-8 mb-2" />
+                      <p className="text-xs">No active contract deployments registered on {selectedChain.toUpperCase()}.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {deployedContracts.map((c, i) => (
+                        <div key={i} className="flex items-center justify-between p-3.5 bg-slate-950/60 rounded-2xl border border-white/5 text-xs">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-white">{c.name}</span>
+                              <span className="rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-[9px] text-indigo-400">
+                                {c.type}
+                              </span>
                             </div>
-                            <div className="text-right">
-                              <span className="text-[10px] text-slate-500">{c.timestamp}</span>
-                              <p className="text-[10px] text-cyan-400 hover:underline cursor-pointer block mt-0.5">Verify</p>
-                            </div>
+                            <p className="text-[10px] text-slate-400 mt-1 font-mono">{c.address}</p>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                          <div className="text-right">
+                            <span className="text-[10px] text-slate-500">{c.timestamp}</span>
+                            <span className="text-[10px] text-cyan-400 block mt-0.5 hover:underline cursor-pointer">Verify</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Shell monitor logs */}
@@ -721,10 +714,10 @@ export default function DashboardPage() {
                   <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
                     <Sparkles className="h-6 w-6 text-cyan-400" /> AI Creator Studio
                   </h2>
-                  <p className="text-slate-400 text-xs mt-1">Generate multi-modal digital assets directly from text prompts.</p>
+                  <p className="text-slate-400 text-xs mt-1">Configure prompt parameters, metadata tags, and storage destinations.</p>
                 </div>
                 
-                {/* Storage Target Toggle */}
+                {/* Storage Toggle */}
                 <div className="flex items-center gap-2 bg-slate-900 border border-white/10 p-1.5 rounded-full">
                   <button
                     onClick={() => setStorageDriver('s3')}
@@ -781,28 +774,161 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-                {/* Configuration Panel */}
+              <div className="grid gap-6 lg:grid-cols-[1.3fr_1.1fr]">
+                {/* Visual Metadata Form */}
                 <div className="space-y-5 rounded-3xl border border-white/5 bg-slate-900/20 p-6">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">1. Configuration Settings</h3>
                   
-                  {/* Prompt Textarea */}
-                  <div className="space-y-2">
-                    <label htmlFor="aiPrompt" className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Text prompt</label>
+                  {/* NFT Details Card */}
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">1. Configure Collection Metadata</h3>
+                    
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Asset Name</label>
+                        <input
+                          type="text"
+                          value={nftName}
+                          onChange={(e) => setNftName(e.target.value)}
+                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
+                          placeholder="e.g. Cyberpunk Warrior #001"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Category</label>
+                        <select
+                          value={nftCategory}
+                          onChange={(e) => setNftCategory(e.target.value)}
+                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
+                        >
+                          <option value="art">Digital Artwork</option>
+                          <option value="gaming">Gaming Collectibles</option>
+                          <option value="music">Audio Tracks</option>
+                          <option value="utility">Utility passes</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Description</label>
+                      <textarea
+                        rows={2}
+                        value={nftDescription}
+                        onChange={(e) => setNftDescription(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
+                        placeholder="Provide details about the utility or artwork..."
+                      />
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Royalty Percentage (%)</label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            value={nftRoyalty}
+                            onChange={(e) => setNftRoyalty(parseFloat(e.target.value) || 0)}
+                            className="w-full rounded-xl border border-white/10 bg-slate-950 pl-3.5 pr-8 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
+                          />
+                          <Percent className="absolute right-3 top-3 h-4 w-4 text-slate-500" />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-slate-500 font-bold uppercase block">External URL Link</label>
+                        <input
+                          type="text"
+                          value={nftExternalUrl}
+                          onChange={(e) => setNftExternalUrl(e.target.value)}
+                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
+                          placeholder="https://myproject.io"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Unlockable Content Details</label>
+                      <textarea
+                        rows={2}
+                        value={nftUnlockable}
+                        onChange={(e) => setNftUnlockable(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
+                        placeholder="Add private downloads link or key code (Visible only to the NFT owner)..."
+                      />
+                    </div>
+
+                    {/* Traits Manager Section */}
+                    <div className="space-y-4 pt-4 border-t border-white/5">
+                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Attributes Traits Manager</span>
+                      
+                      {/* Add Trait Form */}
+                      <div className="grid gap-3 sm:grid-cols-3 items-end">
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] text-slate-400 uppercase">Trait Type</label>
+                          <input
+                            type="text"
+                            value={newTraitType}
+                            onChange={(e) => setNewTraitType(e.target.value)}
+                            placeholder="e.g. Helmet"
+                            className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-cyan-400"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] text-slate-400 uppercase">Value</label>
+                          <input
+                            type="text"
+                            value={newTraitValue}
+                            onChange={(e) => setNewTraitValue(e.target.value)}
+                            placeholder="e.g. Obsidian Visor"
+                            className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-cyan-400"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={addCustomTrait}
+                          className="rounded-xl bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 px-4 py-2 text-xs font-bold hover:bg-cyan-500/10 transition flex items-center justify-center gap-1.5 h-9.5"
+                        >
+                          <Plus className="h-4 w-4" /> Add Trait
+                        </button>
+                      </div>
+
+                      {/* Traits List */}
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {traitsList.map((t, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 rounded-xl bg-slate-950/60 border border-white/10 px-3 py-1.5 text-xs"
+                          >
+                            <span className="text-[9px] text-slate-500 font-semibold">{t.traitType}:</span>
+                            <span className="font-bold text-white">{t.value}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeCustomTrait(idx)}
+                              className="text-slate-400 hover:text-rose-400 transition"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Seed prompt input */}
+                  <div className="space-y-2 pt-4 border-t border-white/5">
+                    <label htmlFor="aiPrompt" className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">2. Seed Text prompt</label>
                     <textarea
                       id="aiPrompt"
                       rows={4}
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3.5 text-xs text-slate-100 placeholder-slate-500 outline-none transition focus:border-cyan-400 focus:bg-slate-950"
-                      placeholder={`Enter prompts to synthesize your ${aiStudioSubTab}...`}
+                      placeholder={`Describe the seed prompt for your ${aiStudioSubTab}...`}
                     />
                   </div>
 
                   {/* Render conditional inputs depending on active generator subtab */}
                   {aiStudioSubTab === 'image' && (
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Style presets</label>
+                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">Style Preset</label>
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {["cyberpunk", "cinematic", "anime", "retro", "abstract"].map((style) => (
                           <button
@@ -830,21 +956,21 @@ export default function DashboardPage() {
                           onChange={(e) => setVideoDuration(e.target.value)}
                           className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
                         >
-                          <option value="5s">5 Seconds (Short clip)</option>
-                          <option value="10s">10 Seconds (Standard loop)</option>
-                          <option value="30s">30 Seconds (Extended teaser)</option>
+                          <option value="5s">5 Seconds</option>
+                          <option value="10s">10 Seconds</option>
+                          <option value="30s">30 Seconds</option>
                         </select>
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Resolution Quality</label>
+                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Resolution</label>
                         <select
                           value={videoResolution}
                           onChange={(e) => setVideoResolution(e.target.value)}
                           className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
                         >
-                          <option value="720p">720p (Fast render)</option>
-                          <option value="1080p">1080p (Standard HD)</option>
-                          <option value="4k">4K UHD (Premium quality)</option>
+                          <option value="720p">720p (Draft)</option>
+                          <option value="1080p">1080p (HD)</option>
+                          <option value="4k">4K UHD</option>
                         </select>
                       </div>
                     </div>
@@ -859,7 +985,6 @@ export default function DashboardPage() {
                           value={audioTempo}
                           onChange={(e) => setAudioTempo(e.target.value)}
                           className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                          placeholder="120"
                         />
                       </div>
                       <div className="space-y-1.5">
@@ -869,8 +994,8 @@ export default function DashboardPage() {
                           onChange={(e) => setAudioGenre(e.target.value)}
                           className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
                         >
-                          <option value="synthwave">Synthwave (80s vibe)</option>
-                          <option value="cyber">Cyberpunk Industrial</option>
+                          <option value="synthwave">Synthwave</option>
+                          <option value="cyber">Cyber Industrial</option>
                           <option value="orchestral">Cinematic Orchestral</option>
                         </select>
                       </div>
@@ -901,7 +1026,7 @@ export default function DashboardPage() {
                     <button
                       onClick={generateArt}
                       disabled={isGenerating}
-                      className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-cyan-500 to-indigo-600 px-6 py-3 text-xs font-semibold text-white shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-50"
+                      className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-cyan-500 to-indigo-600 px-8 py-3.5 text-xs font-semibold text-white shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-50"
                     >
                       {isGenerating ? `Synthesizing ${aiStudioSubTab}...` : `Generate ${aiStudioSubTab}`}
                     </button>
@@ -909,20 +1034,14 @@ export default function DashboardPage() {
                       <span className="font-bold text-cyan-400">Status:</span> {aiStatus}
                     </div>
                   </div>
-
-                  {/* Metadata link output */}
-                  {metadataUrl && (
-                    <div className="rounded-xl border border-white/5 bg-slate-950/40 p-3.5 space-y-1">
-                      <span className="text-[9px] text-slate-500 uppercase font-bold">Metadata hosted url</span>
-                      <p className="text-[10px] font-mono text-cyan-300 break-all select-all">{metadataUrl}</p>
-                    </div>
-                  )}
                 </div>
 
-                {/* Live Preview Panel */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white mb-4">2. Canvas Preview</h3>
+                {/* Live Schema & Preview Panel */}
+                <div className="space-y-6 flex flex-col justify-between">
+                  
+                  {/* Canvas box */}
+                  <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6">
+                    <h3 className="text-sm font-bold text-white mb-4">Canvas Preview</h3>
                     <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950 aspect-square flex items-center justify-center shadow-inner">
                       {imageUrl ? (
                         <img src={imageUrl} alt="Generated AI Asset" className="h-full w-full object-cover rounded-2xl" />
@@ -942,186 +1061,18 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Mint Execution */}
-                  {imageUrl && (
-                    <div className="space-y-3 pt-6 border-t border-white/5">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-400">Mint Fee</span>
-                        <span className="font-bold text-white">0.005 ETH</span>
-                      </div>
-                      <button
-                        onClick={handleMint}
-                        disabled={isMintProcessActive || !metadataUrl || !isConnected}
-                        className="w-full flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 py-3.5 text-xs font-semibold text-white shadow-xl hover:opacity-90 active:scale-95 disabled:opacity-40"
-                      >
-                        {isMintProcessActive ? "Broadcasting Tx..." : "Mint AI NFT Collection (0.005 ETH)"}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Module 2.5: NFT Studio Collection Creator */}
-          {activeModule === "nft-studio" && (
-            <div className="space-y-6 animate-fade-in">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                  <ImageIcon className="h-6 w-6 text-violet-400" /> NFT Studio Creator
-                </h2>
-                <p className="text-slate-400 text-xs mt-1">Design ERC-721 smart contract collection metadata, configure royalties, and add trait values.</p>
-              </div>
-
-              <div className="grid gap-6 lg:grid-cols-[1.3fr_1.1fr]">
-                {/* Wizard Panel */}
-                <div className="space-y-6 rounded-3xl border border-white/5 bg-slate-900/20 p-6">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Collection Variables</h3>
-
-                  {/* Collection Details Inputs */}
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase">Collection Name</label>
-                      <input
-                        type="text"
-                        value={collectionName}
-                        onChange={(e) => setCollectionName(e.target.value)}
-                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-violet-400"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase">Collection Symbol</label>
-                      <input
-                        type="text"
-                        value={collectionSymbol}
-                        onChange={(e) => setCollectionSymbol(e.target.value)}
-                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-violet-400"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] text-slate-500 font-bold uppercase">Description</label>
-                    <textarea
-                      rows={2}
-                      value={collectionDesc}
-                      onChange={(e) => setCollectionDesc(e.target.value)}
-                      className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-violet-400"
-                    />
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2 pt-2 border-t border-white/5">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase">Royalty Fee (%)</label>
-                      <input
-                        type="number"
-                        value={collectionRoyalty}
-                        onChange={(e) => setCollectionRoyalty(parseFloat(e.target.value) || 0)}
-                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-violet-400"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase">Category</label>
-                      <select
-                        value={collectionCategory}
-                        onChange={(e) => setCollectionCategory(e.target.value)}
-                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-violet-400"
-                      >
-                        <option value="art">Artwork Presets</option>
-                        <option value="gaming">Gaming Assets</option>
-                        <option value="membership">DAO Memberships</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Traits Manager Section */}
-                  <div className="space-y-4 pt-4 border-t border-white/5">
-                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Custom Traits & Attributes</span>
-                    
-                    {/* Add Trait Form */}
-                    <div className="grid gap-3 sm:grid-cols-3 items-end">
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] text-slate-400 uppercase">Trait Type</label>
-                        <input
-                          type="text"
-                          value={newTraitType}
-                          onChange={(e) => setNewTraitType(e.target.value)}
-                          placeholder="e.g. Helmet"
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-violet-400"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] text-slate-400 uppercase">Value</label>
-                        <input
-                          type="text"
-                          value={newTraitValue}
-                          onChange={(e) => setNewTraitValue(e.target.value)}
-                          placeholder="e.g. Obsidian Visor"
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-violet-400"
-                        />
-                      </div>
-                      <button
-                        onClick={addCustomTrait}
-                        className="rounded-xl bg-violet-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-violet-500 transition flex items-center justify-center gap-1.5"
-                      >
-                        <Plus className="h-4 w-4" /> Add Trait
-                      </button>
-                    </div>
-
-                    {/* Traits List */}
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      {traitsList.map((t, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 rounded-xl bg-slate-950/60 border border-white/10 px-3 py-1.5 text-xs"
-                        >
-                          <span className="text-[9px] text-slate-500 font-semibold">{t.traitType}:</span>
-                          <span className="font-bold text-white">{t.value}</span>
-                          <span className="rounded bg-violet-500/10 px-1 py-0.5 text-[8px] text-violet-400 font-mono">
-                            {t.rarity}
-                          </span>
-                          <button
-                            onClick={() => removeCustomTrait(idx)}
-                            className="text-slate-400 hover:text-rose-400 transition"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={packageCollectionMetadata}
-                    disabled={isBuildingMetadata}
-                    className="w-full rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 py-3.5 text-xs font-semibold text-white shadow-xl hover:opacity-90 active:scale-95 disabled:opacity-50"
-                  >
-                    {isBuildingMetadata ? "Packaging..." : "Build & Upload Collection Metadata"}
-                  </button>
-
-                  {packagedMetadataUrl && (
-                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-emerald-300 flex items-start gap-2.5 text-xs">
-                      <CheckCircle2 className="h-5 w-5 mt-0.5" />
-                      <div>
-                        <p className="font-bold">Collection Metadata Uploaded Successfully</p>
-                        <p className="text-[10px] mt-1 break-all text-emerald-300/80 font-mono select-all">
-                          {packagedMetadataUrl}
-                        </p>
+                  {/* Schema Preview */}
+                  <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-1.5 mb-4">
+                        <Eye className="h-4 w-4 text-cyan-400" /> Live Metadata JSON (ERC-721 Schema)
+                      </h3>
+                      <div className="rounded-2xl bg-slate-950 p-4 font-mono text-[9px] text-cyan-300 h-64 overflow-y-auto border border-white/5 whitespace-pre leading-relaxed select-all">
+                        {compileLiveMetadata()}
                       </div>
                     </div>
-                  )}
-                </div>
-
-                {/* Metadata JSON Preview Screen */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white flex items-center gap-1.5 mb-4">
-                      <Eye className="h-4 w-4 text-violet-400" /> Live Metadata Schema (ERC-721 JSON)
-                    </h3>
-                    <div className="rounded-2xl bg-slate-950 p-4 font-mono text-[9px] text-violet-300 h-96 overflow-y-auto border border-white/5 whitespace-pre leading-relaxed select-all">
-                      {compileLiveMetadata()}
-                    </div>
                   </div>
+
                 </div>
               </div>
             </div>
@@ -1140,22 +1091,25 @@ export default function DashboardPage() {
               <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
                 {/* Configuration wizard */}
                 <div className="space-y-5 rounded-3xl border border-white/5 bg-slate-900/20 p-6">
-                  <h3 className="text-sm font-bold text-white">1. Select Standard type</h3>
                   
-                  <div className="grid grid-cols-3 gap-2">
-                    {["ERC-20", "ERC-721", "ERC-1155"].map((type) => (
-                      <button
-                        key={type}
-                        onClick={() => setContractType(type as any)}
-                        className={`rounded-xl border py-2.5 px-3 text-xs font-semibold transition ${
-                          contractType === type
-                            ? "border-fuchsia-500/50 bg-fuchsia-500/10 text-fuchsia-300"
-                            : "border-white/5 bg-slate-950 text-slate-400 hover:border-white/10"
-                        }`}
-                      >
-                        {type}
-                      </button>
-                    ))}
+                  {/* Contract Type Selector UI */}
+                  <div className="space-y-2">
+                    <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">Select Contract Standard Type</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {["ERC-20", "ERC-721", "ERC-1155"].map((type) => (
+                        <button
+                          key={type}
+                          onClick={() => setContractType(type as any)}
+                          className={`rounded-xl border py-2.5 px-3 text-xs font-semibold transition ${
+                            contractType === type
+                              ? "border-fuchsia-500/50 bg-fuchsia-500/10 text-fuchsia-300 shadow-lg"
+                              : "border-white/5 bg-slate-950 text-slate-400 hover:border-white/10"
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="space-y-4 pt-4 border-t border-white/5">
@@ -1273,388 +1227,6 @@ export default function DashboardPage() {
                       </div>
                     )}
                   </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Module 4: DeFi Center */}
-          {activeModule === "defi-center" && (
-            <div className="space-y-6 animate-fade-in">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                  <Coins className="h-6 w-6 text-amber-400" /> DeFi Center & Swaps
-                </h2>
-                <p className="text-slate-400 text-xs mt-1">Swap digital assets and monitor mock yield returns on liquid staking pools.</p>
-              </div>
-
-              <div className="grid gap-6 md:grid-cols-2">
-                {/* DEX Swapper Panel */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 space-y-4">
-                  <h3 className="text-sm font-bold text-white">Cross-Chain Dex Swap</h3>
-                  
-                  {/* Swap From */}
-                  <div className="rounded-2xl bg-slate-950/80 p-4 border border-white/5 space-y-2">
-                    <div className="flex justify-between text-xs text-slate-500">
-                      <span>From (Source)</span>
-                      <span>Balance: 12.5 ETH</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <input
-                        type="text"
-                        value={swapFromAmount}
-                        onChange={(e) => calculateSwap(e.target.value)}
-                        className="w-full bg-transparent text-xl font-bold text-white outline-none"
-                      />
-                      <span className="rounded-full bg-white/5 border border-white/10 px-3 py-1 text-xs font-semibold text-white">
-                        ETH
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Swap Arrow */}
-                  <div className="flex justify-center -my-2.5">
-                    <div className="h-8 w-8 rounded-full bg-slate-950 border border-white/10 flex items-center justify-center hover:scale-105 transition cursor-pointer">
-                      <RefreshCw className="h-4 w-4 text-cyan-400" />
-                    </div>
-                  </div>
-
-                  {/* Swap To */}
-                  <div className="rounded-2xl bg-slate-950/80 p-4 border border-white/5 space-y-2">
-                    <div className="flex justify-between text-xs text-slate-500">
-                      <span>To (Destination)</span>
-                      <span>Balance: 0.0 WCOS</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <input
-                        type="text"
-                        value={swapToAmount}
-                        readOnly
-                        className="w-full bg-transparent text-xl font-bold text-white outline-none cursor-default"
-                      />
-                      <span className="rounded-full bg-indigo-500/10 border border-indigo-500/20 px-3 py-1 text-xs font-semibold text-indigo-400">
-                        WCOS
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={executeSwap}
-                    disabled={isSwapping}
-                    className="w-full rounded-full bg-gradient-to-r from-amber-500 to-orange-500 py-3.5 text-xs font-semibold text-white shadow-lg hover:opacity-90 active:scale-95"
-                  >
-                    {isSwapping ? "Executing Swap..." : "Execute Swapping"}
-                  </button>
-                </div>
-
-                {/* Staking Widget */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 space-y-4 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white mb-2">Liquid Staking Yield</h3>
-                    <p className="text-slate-400 text-xs">Lock your community assets to generate network governance power.</p>
-                    
-                    <div className="grid gap-3 grid-cols-2 mt-6">
-                      <div className="rounded-2xl bg-slate-950 p-4 border border-white/5 text-center">
-                        <span className="text-[10px] text-slate-500 uppercase font-bold">Estimated APY</span>
-                        <span className="text-2xl font-bold text-amber-400 block mt-1">12.5%</span>
-                      </div>
-                      <div className="rounded-2xl bg-slate-950 p-4 border border-white/5 text-center">
-                        <span className="text-[10px] text-slate-500 uppercase font-bold">Total Staked</span>
-                        <span className="text-2xl font-bold text-white block mt-1">0.0 ETH</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => addTerminalLog("Staking portal initialized.")}
-                    className="w-full rounded-full border border-white/10 bg-slate-950 py-3.5 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition"
-                  >
-                    Manage Yield Staking Pool
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Module 5: DAO Governance */}
-          {activeModule === "dao-builder" && (
-            <div className="space-y-6 animate-fade-in">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                  <Users className="h-6 w-6 text-teal-400" /> DAO Governance
-                </h2>
-                <p className="text-slate-400 text-xs mt-1">Propose, vote, and direct treasury deployments via smart contract rules.</p>
-              </div>
-
-              <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-                {/* Proposals list */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 space-y-4">
-                  <h3 className="text-sm font-bold text-white">Active Proposals</h3>
-                  
-                  <div className="space-y-3">
-                    {proposals.map((p) => (
-                      <div key={p.id} className="rounded-2xl bg-slate-950/80 border border-white/5 p-4 space-y-3">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-white">{p.title}</span>
-                          <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${
-                            p.status === "Passed" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                            p.status === "Active" ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20" :
-                            "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                          }`}>
-                            {p.status}
-                          </span>
-                        </div>
-
-                        {/* Votes bar */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[10px] text-slate-500">
-                            <span>For: {p.votesFor}</span>
-                            <span>Against: {p.votesAgainst}</span>
-                          </div>
-                          <div className="h-2 bg-white/5 rounded-full overflow-hidden flex">
-                            <div className="bg-emerald-400 h-full" style={{ width: `${(p.votesFor / (p.votesFor + p.votesAgainst)) * 100}%` }} />
-                            <div className="bg-rose-400 h-full" style={{ width: `${(p.votesAgainst / (p.votesFor + p.votesAgainst)) * 100}%` }} />
-                          </div>
-                        </div>
-
-                        {/* Voting CTA */}
-                        {p.status === "Active" && (
-                          <div className="flex gap-2 pt-1 text-[10px]">
-                            <button
-                              onClick={() => handleVote(p.id, "for")}
-                              className="rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3 py-1 font-semibold hover:bg-emerald-500/20 transition"
-                            >
-                              Vote FOR
-                            </button>
-                            <button
-                              onClick={() => handleVote(p.id, "against")}
-                              className="rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 px-3 py-1 font-semibold hover:bg-rose-500/20 transition"
-                            >
-                              Vote AGAINST
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Configuration rules */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 space-y-4 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white mb-4">Governance Variables</h3>
-                    
-                    <div className="space-y-4 text-xs">
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Voting Quorum Threshold</label>
-                        <input
-                          type="text"
-                          defaultValue="4%"
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-teal-400"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Minimum Proposal Power</label>
-                        <input
-                          type="text"
-                          defaultValue="1,000 WCOS"
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-teal-400"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => addTerminalLog("Created a new draft proposal for DAO review.")}
-                    className="w-full rounded-full bg-gradient-to-r from-teal-500 to-indigo-600 py-3.5 text-xs font-semibold text-white shadow-lg hover:opacity-90 transition"
-                  >
-                    Submit Proposal Draft
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Module 6: Token Launchpad */}
-          {activeModule === "token-launchpad" && (
-            <div className="space-y-6 animate-fade-in">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                  <Rocket className="h-6 w-6 text-rose-400" /> Token Launchpad
-                </h2>
-                <p className="text-slate-400 text-xs mt-1">Establish tokenomics, locking rules, airdrops, and launch parameters for tokens.</p>
-              </div>
-
-              <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-                {/* Configuration sliders */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 space-y-5">
-                  <h3 className="text-sm font-bold text-white">Tokenomics Supply Allocation</h3>
-                  
-                  <div className="space-y-4">
-                    {/* Public Sale */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-300">Public Sale Allocation</span>
-                        <span className="font-bold text-white">{pubSalePct}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={pubSalePct}
-                        onChange={(e) => adjustTokenomics("pub", parseInt(e.target.value))}
-                        className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-rose-500"
-                      />
-                    </div>
-
-                    {/* Team allocation */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-300">Developer Team Allocation</span>
-                        <span className="font-bold text-white">{teamPct}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={teamPct}
-                        onChange={(e) => adjustTokenomics("team", parseInt(e.target.value))}
-                        className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-rose-500"
-                      />
-                    </div>
-
-                    {/* Liquidity allocation */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-300">Liquidity Locking Allocation</span>
-                        <span className="font-bold text-white">{liquidityPct}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={liquidityPct}
-                        onChange={(e) => adjustTokenomics("liq", parseInt(e.target.value))}
-                        className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-rose-500"
-                      />
-                    </div>
-
-                    {/* Staking reward */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-300">Staking Rewards Allocation</span>
-                        <span className="font-bold text-white">{stakingPct}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={stakingPct}
-                        onChange={(e) => adjustTokenomics("stake", parseInt(e.target.value))}
-                        className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-rose-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Tokenomics Visual breakdown */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white mb-4 font-mono">Allocation breakdown</h3>
-                    <div className="space-y-3.5 text-xs">
-                      <div className="flex justify-between items-center bg-slate-950/40 p-3 rounded-xl border border-white/5">
-                        <span className="text-slate-400 font-semibold block">Public Sale Tokens:</span>
-                        <span className="font-bold text-rose-300 block font-mono">
-                          {((pubSalePct / 100) * launchpadTotalSupply).toLocaleString()} tokens
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center bg-slate-950/40 p-3 rounded-xl border border-white/5">
-                        <span className="text-slate-400 font-semibold block">Team Vesting Tokens:</span>
-                        <span className="font-bold text-indigo-300 block font-mono">
-                          {((teamPct / 100) * launchpadTotalSupply).toLocaleString()} tokens
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center bg-slate-950/40 p-3 rounded-xl border border-white/5">
-                        <span className="text-slate-400 font-semibold block">Locked Dex Liquidity:</span>
-                        <span className="font-bold text-cyan-300 block font-mono">
-                          {((liquidityPct / 100) * launchpadTotalSupply).toLocaleString()} tokens
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center bg-slate-950/40 p-3 rounded-xl border border-white/5">
-                        <span className="text-slate-400 font-semibold block">Staking Yield Allocation:</span>
-                        <span className="font-bold text-amber-300 block font-mono">
-                          {((stakingPct / 100) * launchpadTotalSupply).toLocaleString()} tokens
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => addTerminalLog("Token launch schedule configured and whitelist compiled.")}
-                    className="w-full rounded-full bg-gradient-to-r from-rose-500 to-indigo-600 py-3.5 text-xs font-semibold text-white shadow-lg hover:opacity-90 active:scale-95 transition"
-                  >
-                    Lock Supply & Create Whitelist
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Module 7: Developer Portal */}
-          {activeModule === "developer-portal" && (
-            <div className="space-y-6 animate-fade-in">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                  <Code2 className="h-6 w-6 text-emerald-400" /> Developer Portal
-                </h2>
-                <p className="text-slate-400 text-xs mt-1">Manage API integrations, generate credential tokens, and configure Webhooks.</p>
-              </div>
-
-              <div className="grid gap-6 md:grid-cols-2">
-                {/* Credentials generator */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 space-y-4">
-                  <h3 className="text-sm font-bold text-white">API Authentication Keys</h3>
-                  
-                  <div className="space-y-3">
-                    {apiKeys.map((key, i) => (
-                      <div key={i} className="rounded-xl bg-slate-950 p-3 font-mono text-[10px] text-emerald-400 border border-white/5 select-all truncate">
-                        {key}
-                      </div>
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={generateApiKey}
-                    className="w-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 py-3 text-xs font-semibold text-white hover:opacity-90 transition"
-                  >
-                    Create New Live Key
-                  </button>
-                </div>
-
-                {/* Integration guidelines snippet */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white mb-4">SDK Integration Code</h3>
-                    <div className="rounded-2xl bg-slate-950 p-4 font-mono text-[9px] text-indigo-300 border border-white/5 overflow-x-auto whitespace-pre">
-{`import { WcosMinter } from "@wcos/sdk";
-
-const wcos = new WcosMinter({
-  apiKey: "wcos_live_..."
-});
-
-const tx = await wcos.mintNFT({
-  recipient: "0x123...",
-  metadataUrl: "https://..."
-});`}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => addTerminalLog("API Integration documentation link opened.")}
-                    className="w-full rounded-full border border-white/10 bg-slate-950 py-3.5 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition"
-                  >
-                    Explore GraphQL Schema Endpoint
-                  </button>
                 </div>
               </div>
             </div>

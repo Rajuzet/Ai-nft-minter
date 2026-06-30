@@ -17,6 +17,48 @@ const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const ai_studio_service_1 = require("./ai-studio.service");
 const class_validator_1 = require("class-validator");
+class CustomMetadataInputDto {
+}
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'NFT metadata name', required: false }),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CustomMetadataInputDto.prototype, "name", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'NFT metadata description', required: false }),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CustomMetadataInputDto.prototype, "description", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'NFT category classification', required: false }),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CustomMetadataInputDto.prototype, "category", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'NFT custom traits array', required: false }),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Array)
+], CustomMetadataInputDto.prototype, "traits", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Royalty fee percentage', required: false }),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], CustomMetadataInputDto.prototype, "royaltyPercentage", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'External project URL link', required: false }),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CustomMetadataInputDto.prototype, "externalUrl", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Details of any unlockable content', required: false }),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CustomMetadataInputDto.prototype, "unlockableContent", void 0);
 class GenerateArtDto {
 }
 __decorate([
@@ -31,15 +73,20 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
 ], GenerateArtDto.prototype, "storage", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ description: 'Custom metadata parameters', required: false }),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", CustomMetadataInputDto)
+], GenerateArtDto.prototype, "customMetadata", void 0);
 let AiStudioController = class AiStudioController {
     constructor(aiStudioService) {
         this.aiStudioService = aiStudioService;
     }
     async generateArtLegacy(dto) {
-        return this.aiStudioService.generateArt(dto.prompt, dto.storage || 's3');
+        return this.aiStudioService.generateArt(dto.prompt, dto.storage || 's3', dto.customMetadata);
     }
     async generateArt(dto) {
-        return this.aiStudioService.generateArt(dto.prompt, dto.storage || 's3');
+        return this.aiStudioService.generateArt(dto.prompt, dto.storage || 's3', dto.customMetadata);
     }
 };
 exports.AiStudioController = AiStudioController;

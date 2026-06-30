@@ -3,6 +3,16 @@ import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedroc
 import { StorageService } from '../storage/storage.service';
 import * as crypto from 'crypto';
 
+export interface CustomMetadataDto {
+  name?: string;
+  description?: string;
+  category?: string;
+  traits?: Array<{ traitType: string; value: string }>;
+  royaltyPercentage?: number;
+  externalUrl?: string;
+  unlockableContent?: string;
+}
+
 @Injectable()
 export class AiStudioService implements OnModuleInit {
   private bedrockClient: BedrockRuntimeClient;
@@ -27,7 +37,8 @@ export class AiStudioService implements OnModuleInit {
 
   async generateArt(
     prompt: string, 
-    storage: 's3' | 'ipfs' = 's3'
+    storage: 's3' | 'ipfs' = 's3',
+    customMetadata?: CustomMetadataDto
   ): Promise<{ metadataUrl: string; imageUrl: string; metadata: any }> {
     if (!prompt || typeof prompt !== 'string') {
       throw new BadRequestException('A valid prompt string is required.');
@@ -75,7 +86,7 @@ export class AiStudioService implements OnModuleInit {
         throw new InternalServerErrorException('Unsupported image payload format from Bedrock.');
       }
 
-      // 3. Upload Image to selected storage driver
+      // 3. Upload Image
       let imageUrl: string;
       const imageKey = `art/${Date.now()}-${crypto.randomUUID()}.png`;
 
@@ -85,19 +96,36 @@ export class AiStudioService implements OnModuleInit {
         imageUrl = await this.storageService.uploadToS3(imageBuffer, imageKey, 'image/png');
       }
 
-      // 4. Assemble ERC-721 Metadata
+      // 4. Assemble Custom ERC-721 Metadata with user inputs or safe fallbacks
+      const metadataName = customMetadata?.name || `WCOS Artwork #${Date.now()}`;
+      const metadataDesc = customMetadata?.description || 'Institutional-grade AI-generated NFT art generated from a secure WCOS prompt.';
+      const metadataCategory = customMetadata?.category || 'Art';
+      const metadataRoyalty = customMetadata?.royaltyPercentage ?? 5;
+      const metadataExternalUrl = customMetadata?.externalUrl || 'https://wcos.io';
+      const metadataUnlockable = customMetadata?.unlockableContent || '';
+
+      const formattedAttributes = customMetadata?.traits && customMetadata.traits.length > 0
+        ? customMetadata.traits.map(t => ({ trait_type: t.traitType, value: t.value }))
+        : [
+            { trait_type: 'Generation Engine', value: 'amazon.titan-image-generator-v2:0' },
+            { trait_type: 'Prompt', value: prompt },
+            { trait_type: 'Storage Type', value: storage.toUpperCase() }
+          ];
+
       const metadata = {
-        name: `AI Studio Collective Artwork #${Date.now()}`,
-        description: 'Institutional-grade AI-generated NFT art generated from a secure prompt.',
+        name: metadataName,
+        description: metadataDesc,
         image: imageUrl,
-        attributes: [
-          { trait_type: 'Generation Engine', value: 'amazon.titan-image-generator-v2:0' },
-          { trait_type: 'Prompt', value: prompt },
-          { trait_type: 'Storage Type', value: storage.toUpperCase() }
-        ],
+        external_url: metadataExternalUrl,
+        seller_fee_basis_points: metadataRoyalty * 100, // standard 100 bps = 1%
+        attributes: formattedAttributes,
+        properties: {
+          category: metadataCategory,
+          unlockable_content: metadataUnlockable
+        }
       };
 
-      // 5. Upload Metadata to selected storage driver
+      // 5. Upload Metadata
       let metadataUrl: string;
       const metadataKey = `metadata/${Date.now()}-${crypto.randomUUID()}.json`;
 
