@@ -6,20 +6,18 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AppModule = void 0;
+exports.CollectionsModule = void 0;
 const common_1 = require("@nestjs/common");
-const ai_studio_module_1 = require("./ai-studio/ai-studio.module");
-const contracts_module_1 = require("./contracts/contracts.module");
-const collections_module_1 = require("./collections/collections.module");
-const marketplace_module_1 = require("./marketplace/marketplace.module");
-let AppModule = class AppModule {
+const collections_controller_1 = require("./collections.controller");
+const collections_service_1 = require("./collections.service");
+let CollectionsModule = class CollectionsModule {
 };
-exports.AppModule = AppModule;
-exports.AppModule = AppModule = __decorate([
+exports.CollectionsModule = CollectionsModule;
+exports.CollectionsModule = CollectionsModule = __decorate([
     (0, common_1.Module)({
-        imports: [ai_studio_module_1.AiStudioModule, contracts_module_1.ContractsModule, collections_module_1.CollectionsModule, marketplace_module_1.MarketplaceModule],
-        controllers: [],
-        providers: [],
+        controllers: [collections_controller_1.CollectionsController],
+        providers: [collections_service_1.CollectionsService],
+        exports: [collections_service_1.CollectionsService],
     })
-], AppModule);
-//# sourceMappingURL=app.module.js.map
+], CollectionsModule);
+//# sourceMappingURL=collections.module.js.map

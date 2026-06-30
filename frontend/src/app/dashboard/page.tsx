@@ -8,7 +8,8 @@ import {
   Terminal, ShieldAlert, Cpu, Layers, Coins, Compass, Users, Rocket, Code2, 
   Wallet, RefreshCw, Send, CheckCircle2, ChevronRight, Activity, Sparkles, 
   Sliders, Play, Trash2, Image as ImageIcon, Video, Music, Box, Settings, 
-  Database, Plus, Eye, ListFilter, Percent, Globe, AlertTriangle
+  Database, Plus, Eye, ListFilter, Percent, Globe, AlertTriangle, FileText,
+  Tag, ShoppingBag, X, Info
 } from "lucide-react";
 import ChatAssistant from "../../components/assistant/ChatAssistant";
 
@@ -40,7 +41,43 @@ interface DraftAsset {
   externalUrl: string;
   unlockableContent: string;
   traits: CustomTrait[];
-  status: "DRAFT" | "MINTED" | "MINTING";
+  status: "DRAFT" | "MINTED" | "MINTING" | "LISTED";
+  txHash?: string;
+  timestamp: string;
+  collectionAddress?: string;
+}
+
+interface CollectionRecord {
+  id: string;
+  name: string;
+  symbol: string;
+  description: string;
+  logoUrl: string;
+  bannerUrl: string;
+  category: string;
+  royaltyPercentage: number;
+  royaltyReceiver: string;
+  maxSupply: number;
+  chain: string;
+  contractType: "ERC-721" | "ERC-1155";
+  contractAddress?: string;
+  status: "DRAFT" | "DEPLOYED" | "DEPLOYING";
+  timestamp: string;
+}
+
+interface ListingRecord {
+  id: string;
+  nftAddress: string;
+  tokenId: number;
+  seller: string;
+  price: string;
+  collectionName: string;
+  chain: string;
+  imageUrl: string;
+  name: string;
+  description: string;
+  status: "LISTED" | "BOUGHT" | "CANCELLED";
+  buyer?: string;
   txHash?: string;
   timestamp: string;
 }
@@ -61,19 +98,126 @@ export default function DashboardPage() {
     setTerminalLogs(prev => [...prev.slice(-15), `[${new Date().toLocaleTimeString()}] ${log}`]);
   };
 
-  useEffect(() => {
-    if (isConnected && address) {
-      addTerminalLog(`Wallet connected: ${address.slice(0, 10)}...${address.slice(-8)} on ${chain?.name || "EVM Chain"}`);
-      setSelectedChain(chain?.id === 8453 ? "base-mainnet" : "base-sepolia");
-    } else {
-      addTerminalLog("Wallet disconnected or session expired.");
-    }
-  }, [isConnected, address, chain]);
-
   const [autoConfigParams, setAutoConfigParams] = useState<Record<string, any>>({});
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
 
   // ----------------------------------------------------
-  // Module 1: AI Creator Studio State & Handlers
+  // Collections Manager State
+  // ----------------------------------------------------
+  const [collections, setCollections] = useState<CollectionRecord[]>([]);
+  const [colName, setColName] = useState("");
+  const [colSymbol, setColSymbol] = useState("");
+  const [colDesc, setColDesc] = useState("");
+  const [colLogo, setColLogo] = useState("");
+  const [colBanner, setColBanner] = useState("");
+  const [colCategory, setColCategory] = useState("art");
+  const [colRoyalty, setColRoyalty] = useState(5);
+  const [colRoyaltyReceiver, setColRoyaltyReceiver] = useState("");
+  const [colMaxSupply, setColMaxSupply] = useState(1000);
+  const [colChain, setColChain] = useState("base-sepolia");
+  const [colContractType, setColContractType] = useState<"ERC-721" | "ERC-1155">("ERC-721");
+  const [isDeployingCollection, setIsDeployingCollection] = useState(false);
+  const [selectedCollection, setSelectedCollection] = useState<string>("");
+
+  const fetchCollections = async () => {
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/collections`);
+      if (res.ok) {
+        const data = await res.json();
+        setCollections(data);
+        if (data.length > 0 && !selectedCollection) {
+          setSelectedCollection(data[0].contractAddress || data[0].id);
+        }
+      }
+    } catch (err) {
+      console.error("fetchCollections error:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCollections();
+  }, []);
+
+  useEffect(() => {
+    if (address && !colRoyaltyReceiver) {
+      setColRoyaltyReceiver(address);
+    }
+  }, [address]);
+
+  const saveCollectionDraft = async () => {
+    if (!colName || !colSymbol) {
+      addTerminalLog("Collection Name and Symbol are required.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${backendUrl}/api/v1/collections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: colName,
+          symbol: colSymbol,
+          description: colDesc,
+          logoUrl: colLogo || "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/default-logo.png",
+          bannerUrl: colBanner || "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/default-banner.png",
+          category: colCategory,
+          royaltyPercentage: colRoyalty,
+          royaltyReceiver: colRoyaltyReceiver || address || "0x0000000000000000000000000000000000000000",
+          maxSupply: colMaxSupply,
+          chain: colChain,
+          contractType: colContractType,
+          status: "DRAFT"
+        })
+      });
+
+      if (response.ok) {
+        addTerminalLog(`Saved collection draft: ${colName} (${colSymbol})`);
+        fetchCollections();
+        // Clear fields
+        setColName("");
+        setColSymbol("");
+        setColDesc("");
+      }
+    } catch (err: any) {
+      addTerminalLog(`Save draft error: ${err.message}`);
+    }
+  };
+
+  const deployCollectionContract = async (col: CollectionRecord) => {
+    if (!isConnected) {
+      addTerminalLog("Wallet not connected.");
+      return;
+    }
+    setIsDeployingCollection(true);
+    addTerminalLog(`Initiating deployment for collection: ${col.name} on ${col.chain.toUpperCase()}`);
+
+    setTimeout(async () => {
+      const mockAddress = "0x" + Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+      
+      try {
+        const response = await fetch(`${backendUrl}/api/v1/collections/deploy`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: col.id,
+            contractAddress: mockAddress
+          })
+        });
+
+        if (response.ok) {
+          addTerminalLog(`Successfully deployed collection to ${mockAddress}`);
+          fetchCollections();
+        }
+      } catch (err: any) {
+        addTerminalLog(`Deployment error: ${err.message}`);
+      } finally {
+        setIsDeployingCollection(false);
+      }
+    }, 2000);
+  };
+
+  // ----------------------------------------------------
+  // AI Creator Studio State & Handlers
   // ----------------------------------------------------
   const [aiStudioSubTab, setAiStudioSubTab] = useState<'image' | 'video' | 'audio' | '3d'>('image');
   const [prompt, setPrompt] = useState("");
@@ -93,13 +237,6 @@ export default function DashboardPage() {
   const [aiStatus, setAiStatus] = useState("Ready.");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Multi-Modal configurations
-  const [videoDuration, setVideoDuration] = useState("5s");
-  const [videoResolution, setVideoResolution] = useState("1080p");
-  const [audioTempo, setAudioTempo] = useState("120");
-  const [audioGenre, setAudioGenre] = useState("synthwave");
-  const [meshFormat, setMeshFormat] = useState(".glb");
-
   // Custom traits list
   const [traitsList, setTraitsList] = useState<CustomTrait[]>([
     { traitType: "Background", value: "Cyberpunk City Grid", rarity: "10%" },
@@ -114,7 +251,6 @@ export default function DashboardPage() {
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
 
   const contractAddress = process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS;
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
 
   // Web3 contracts mint hook for AI NFT
   const contractAbi = [
@@ -244,7 +380,8 @@ export default function DashboardPage() {
           unlockableContent: nftUnlockable,
           traits: [...traitsList],
           status: "DRAFT",
-          timestamp: new Date().toLocaleTimeString()
+          timestamp: new Date().toLocaleTimeString(),
+          collectionAddress: selectedCollection
         };
         setDraftAssets(prev => [newDraft, ...prev]);
 
@@ -284,7 +421,8 @@ export default function DashboardPage() {
           unlockableContent: nftUnlockable,
           traits: [...traitsList],
           status: "DRAFT",
-          timestamp: new Date().toLocaleTimeString()
+          timestamp: new Date().toLocaleTimeString(),
+          collectionAddress: selectedCollection
         };
         setDraftAssets(prev => [newDraft, ...prev]);
       }, 2000);
@@ -296,13 +434,15 @@ export default function DashboardPage() {
       addTerminalLog("Wallet not connected.");
       return;
     }
-    if (!contractAddress || contractAddress.startsWith("0xYour")) {
-      addTerminalLog("Contract address not set in environment.");
+
+    const mintTargetContract = draft.collectionAddress || contractAddress;
+    if (!mintTargetContract || mintTargetContract.startsWith("0xYour")) {
+      addTerminalLog("Contract address not set in environment or selected collection.");
       return;
     }
 
     setSelectedDraftId(draft.id);
-    addTerminalLog(`Initiating minting for draft ${draft.name} on contract ${contractAddress}...`);
+    addTerminalLog(`Initiating minting for draft ${draft.name} on contract ${mintTargetContract}...`);
     
     // Update draft status to MINTING
     setDraftAssets(prev =>
@@ -315,7 +455,7 @@ export default function DashboardPage() {
     );
 
     writeContract({
-      address: contractAddress as `0x${string}`,
+      address: mintTargetContract as `0x${string}`,
       abi: contractAbi,
       functionName: "mintAINFT",
       args: [address, draft.metadataUrl],
@@ -324,7 +464,127 @@ export default function DashboardPage() {
   };
 
   // ----------------------------------------------------
-  // Module 2: Contract Builder State & Handlers
+  // Marketplace Modules & Operations
+  // ----------------------------------------------------
+  const [listings, setListings] = useState<ListingRecord[]>([]);
+  const [isListingModalOpen, setIsListingModalOpen] = useState(false);
+  const [listingPrice, setListingPrice] = useState("0.05");
+  const [selectedAssetForListing, setSelectedAssetForListing] = useState<DraftAsset | null>(null);
+
+  const fetchListings = async () => {
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/marketplace/listings`);
+      if (res.ok) {
+        const data = await res.json();
+        setListings(data);
+      }
+    } catch (err) {
+      console.error("fetchListings error:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchListings();
+  }, []);
+
+  const initiateListing = (asset: DraftAsset) => {
+    setSelectedAssetForListing(asset);
+    setIsListingModalOpen(true);
+  };
+
+  const submitListing = async () => {
+    if (!selectedAssetForListing) return;
+    addTerminalLog(`Listing NFT ${selectedAssetForListing.name} for ${listingPrice} ETH...`);
+
+    try {
+      const response = await fetch(`${backendUrl}/api/v1/marketplace/list`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nftAddress: selectedAssetForListing.collectionAddress || contractAddress || "0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A",
+          tokenId: Math.floor(Math.random() * 1000), // simulated token ID
+          seller: address || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          price: listingPrice,
+          collectionName: "AI Studio Collective",
+          chain: selectedChain,
+          imageUrl: selectedAssetForListing.imageUrl,
+          name: selectedAssetForListing.name,
+          description: selectedAssetForListing.description
+        })
+      });
+
+      if (response.ok) {
+        addTerminalLog(`Successfully listed NFT for sale!`);
+        
+        // Update local status
+        setDraftAssets(prev =>
+          prev.map(asset => {
+            if (asset.id === selectedAssetForListing.id) {
+              return { ...asset, status: "LISTED" };
+            }
+            return asset;
+          })
+        );
+
+        fetchListings();
+        setIsListingModalOpen(false);
+      }
+    } catch (err: any) {
+      addTerminalLog(`Listing error: ${err.message}`);
+    }
+  };
+
+  const handleBuyNFT = async (listing: ListingRecord) => {
+    if (!isConnected || !address) {
+      addTerminalLog("Connect wallet to purchase.");
+      return;
+    }
+
+    addTerminalLog(`Processing purchase for ${listing.name} for ${listing.price} ETH...`);
+    setTimeout(async () => {
+      const mockTx = "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+      
+      try {
+        const response = await fetch(`${backendUrl}/api/v1/marketplace/buy`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: listing.id,
+            buyer: address,
+            txHash: mockTx
+          })
+        });
+
+        if (response.ok) {
+          addTerminalLog(`Successfully purchased ${listing.name}! Tx: ${mockTx}`);
+          fetchListings();
+        }
+      } catch (err: any) {
+        addTerminalLog(`Purchase error: ${err.message}`);
+      }
+    }, 1500);
+  };
+
+  const handleCancelListing = async (listing: ListingRecord) => {
+    addTerminalLog(`Cancelling listing for ${listing.name}...`);
+    try {
+      const response = await fetch(`${backendUrl}/api/v1/marketplace/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: listing.id })
+      });
+
+      if (response.ok) {
+        addTerminalLog(`Listing cancelled.`);
+        fetchListings();
+      }
+    } catch (err: any) {
+      addTerminalLog(`Cancel listing error: ${err.message}`);
+    }
+  };
+
+  // ----------------------------------------------------
+  // Module 3: Contract Builder State & Handlers
   // ----------------------------------------------------
   const [contractType, setContractType] = useState<"ERC-20" | "ERC-721" | "ERC-1155">("ERC-721");
   const [contractName, setContractName] = useState("");
@@ -517,6 +777,20 @@ export default function DashboardPage() {
             </button>
 
             <button
+              onClick={() => setActiveModule("collections")}
+              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
+                activeModule === "collections"
+                  ? "bg-emerald-600/10 text-emerald-400 border border-emerald-500/20"
+                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <FileText className="h-4 w-4" /> My Collections
+              </span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+
+            <button
               onClick={() => setActiveModule("ai-studio")}
               className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
                 activeModule === "ai-studio"
@@ -531,10 +805,24 @@ export default function DashboardPage() {
             </button>
 
             <button
+              onClick={() => setActiveModule("marketplace")}
+              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
+                activeModule === "marketplace"
+                  ? "bg-fuchsia-600/10 text-fuchsia-400 border border-fuchsia-500/20"
+                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <ShoppingBag className="h-4 w-4" /> NFT Marketplace
+              </span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+
+            <button
               onClick={() => setActiveModule("contract-builder")}
               className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
                 activeModule === "contract-builder"
-                  ? "bg-fuchsia-600/10 text-fuchsia-400 border border-fuchsia-500/20"
+                  ? "bg-slate-600/15 text-slate-300 border border-slate-500/20"
                   : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
               }`}
             >
@@ -596,6 +884,7 @@ export default function DashboardPage() {
                             <img src={asset.imageUrl} alt={asset.name} className="h-full w-full object-cover" />
                             <span className={`absolute top-3 right-3 rounded-full border px-2.5 py-0.5 text-[9px] font-bold ${
                               asset.status === 'MINTED' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                              asset.status === 'LISTED' ? 'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20' :
                               asset.status === 'MINTING' ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' :
                               'bg-amber-500/10 text-amber-400 border-amber-500/20'
                             }`}>
@@ -610,17 +899,6 @@ export default function DashboardPage() {
                               <span className="rounded bg-white/5 px-2 py-0.5 text-[8px] text-slate-400 uppercase font-mono">{asset.category}</span>
                             </div>
                             <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{asset.description}</p>
-                            
-                            {/* Traits */}
-                            {asset.traits.length > 0 && (
-                              <div className="flex flex-wrap gap-1.5 pt-1">
-                                {asset.traits.slice(0, 3).map((t, idx) => (
-                                  <span key={idx} className="rounded-lg bg-slate-950 px-2 py-0.5 text-[8px] text-cyan-300 font-mono">
-                                    {t.traitType}: {t.value}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         </div>
 
@@ -631,22 +909,22 @@ export default function DashboardPage() {
                               onClick={() => handleMintDraft(asset)}
                               className="w-full rounded-full bg-indigo-600 hover:bg-indigo-500 py-2 text-xs font-semibold text-white transition-all duration-200"
                             >
-                              Mint NFT on Base
+                              Mint NFT
                             </button>
                           ) : asset.status === "MINTING" ? (
                             <div className="w-full flex items-center justify-center gap-1.5 text-xs text-cyan-400 py-2 font-semibold">
                               <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Publishing on-chain...
                             </div>
+                          ) : asset.status === "MINTED" ? (
+                            <button
+                              onClick={() => initiateListing(asset)}
+                              className="w-full rounded-full bg-fuchsia-600 hover:bg-fuchsia-500 py-2 text-xs font-semibold text-white transition-all"
+                            >
+                              List on Marketplace
+                            </button>
                           ) : (
-                            <div className="w-full space-y-1.5">
-                              <div className="flex items-center justify-center gap-1 text-xs text-emerald-400 py-1 font-semibold">
-                                <CheckCircle2 className="h-3.5 w-3.5" /> Minted Successfully
-                              </div>
-                              {asset.txHash && (
-                                <p className="text-[9px] font-mono text-slate-500 text-center truncate">
-                                  Tx: {asset.txHash}
-                                </p>
-                              )}
+                            <div className="w-full flex items-center justify-center gap-1 text-xs text-fuchsia-400 py-2 font-semibold border border-fuchsia-500/20 rounded-full bg-fuchsia-500/5">
+                              <Tag className="h-3.5 w-3.5" /> Listed on Marketplace
                             </div>
                           )}
                         </div>
@@ -700,6 +978,183 @@ export default function DashboardPage() {
                         <div key={i} className="leading-relaxed whitespace-pre-wrap">{log}</div>
                       ))}
                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Module: Collections Manager */}
+          {activeModule === "collections" && (
+            <div className="space-y-6 animate-fade-in">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                    <FileText className="h-6 w-6 text-emerald-400" /> Collection Creator
+                  </h2>
+                  <p className="text-slate-400 text-xs mt-1">Configure parameters and deploy custom collection smart contracts.</p>
+                </div>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
+                {/* Visual form collection builder */}
+                <div className="space-y-5 rounded-3xl border border-white/5 bg-slate-900/20 p-6">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">Configure Collection Details</h3>
+                  
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Collection Name</label>
+                      <input
+                        type="text"
+                        value={colName}
+                        onChange={(e) => setColName(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                        placeholder="e.g. Cyberpunk Wanderers"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Symbol</label>
+                      <input
+                        type="text"
+                        value={colSymbol}
+                        onChange={(e) => setColSymbol(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                        placeholder="e.g. CPW"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-500 font-bold uppercase block">Description</label>
+                    <textarea
+                      rows={2}
+                      value={colDesc}
+                      onChange={(e) => setColDesc(e.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                      placeholder="About this collection..."
+                    />
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Logo Image URL</label>
+                      <input
+                        type="text"
+                        value={colLogo}
+                        onChange={(e) => setColLogo(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                        placeholder="https://image.png"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Banner Image URL</label>
+                      <input
+                        type="text"
+                        value={colBanner}
+                        onChange={(e) => setColBanner(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                        placeholder="https://banner.png"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Max Supply</label>
+                      <input
+                        type="number"
+                        value={colMaxSupply}
+                        onChange={(e) => setColMaxSupply(parseInt(e.target.value) || 0)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Royalty Percentage (%)</label>
+                      <input
+                        type="number"
+                        value={colRoyalty}
+                        onChange={(e) => setColRoyalty(parseInt(e.target.value) || 0)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Token Standard</label>
+                      <select
+                        value={colContractType}
+                        onChange={(e) => setColContractType(e.target.value as any)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                      >
+                        <option value="ERC-721">ERC-721 Collection</option>
+                        <option value="ERC-1155">ERC-1155 Multi-token</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-500 font-bold uppercase block">Royalty Receiver Address</label>
+                    <input
+                      type="text"
+                      value={colRoyaltyReceiver}
+                      onChange={(e) => setColRoyaltyReceiver(e.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
+                      placeholder="0x..."
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-4 border-t border-white/5">
+                    <button
+                      onClick={saveCollectionDraft}
+                      className="flex-1 rounded-full border border-white/10 bg-slate-950 py-3.5 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition"
+                    >
+                      Save as Draft
+                    </button>
+                  </div>
+                </div>
+
+                {/* List Collections Panel */}
+                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-white mb-4">My Collection Repositories</h3>
+                    {collections.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl text-slate-500 text-center">
+                        <FileText className="h-8 w-8 mb-2" />
+                        <p className="text-xs">No active collections found.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3.5">
+                        {collections.map((col) => (
+                          <div key={col.id} className="p-4 bg-slate-950/65 rounded-2xl border border-white/5 flex items-start gap-3.5">
+                            <img src={col.logoUrl} alt={col.name} className="h-12 w-12 rounded-xl object-cover" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-white truncate">{col.name}</span>
+                                <span className="rounded bg-white/5 px-2 py-0.5 text-[8px] text-slate-400 font-mono">{col.symbol}</span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{col.description}</p>
+                              
+                              {col.status === "DEPLOYED" ? (
+                                <p className="text-[9px] font-mono text-emerald-400 mt-2 truncate bg-emerald-500/5 px-2.5 py-1 border border-emerald-500/20 rounded-lg">
+                                  Deployed: {col.contractAddress}
+                                </p>
+                              ) : (
+                                <div className="mt-3 flex items-center justify-between">
+                                  <span className="rounded-full bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 text-[8px] text-amber-400 font-bold uppercase">
+                                    DRAFT
+                                  </span>
+                                  <button
+                                    onClick={() => deployCollectionContract(col)}
+                                    disabled={isDeployingCollection}
+                                    className="rounded-full bg-emerald-600 hover:bg-emerald-500 px-3.5 py-1 text-[10px] font-bold text-white transition disabled:opacity-50"
+                                  >
+                                    Deploy Contract
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -780,7 +1235,28 @@ export default function DashboardPage() {
                   
                   {/* NFT Details Card */}
                   <div className="space-y-4">
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">1. Configure Collection Metadata</h3>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider">1. Configure Collection Metadata</h3>
+                      
+                      {/* Select existing collection */}
+                      <div className="flex items-center gap-1.5 bg-slate-950 border border-white/10 p-1.5 rounded-xl text-xs">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase ml-1">Target:</span>
+                        <select
+                          value={selectedCollection}
+                          onChange={(e) => {
+                            setSelectedCollection(e.target.value);
+                            addTerminalLog(`Selected Target Collection: ${e.target.value}`);
+                          }}
+                          className="bg-transparent text-white text-[10px] font-bold outline-none pr-1 cursor-pointer"
+                        >
+                          {collections.map((col) => (
+                            <option key={col.id} value={col.contractAddress || col.id} className="bg-slate-950">
+                              {col.name} ({col.status})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                     
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-1.5">
@@ -947,80 +1423,6 @@ export default function DashboardPage() {
                     </div>
                   )}
 
-                  {aiStudioSubTab === 'video' && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Duration</label>
-                        <select
-                          value={videoDuration}
-                          onChange={(e) => setVideoDuration(e.target.value)}
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                        >
-                          <option value="5s">5 Seconds</option>
-                          <option value="10s">10 Seconds</option>
-                          <option value="30s">30 Seconds</option>
-                        </select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Resolution</label>
-                        <select
-                          value={videoResolution}
-                          onChange={(e) => setVideoResolution(e.target.value)}
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                        >
-                          <option value="720p">720p (Draft)</option>
-                          <option value="1080p">1080p (HD)</option>
-                          <option value="4k">4K UHD</option>
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  {aiStudioSubTab === 'audio' && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Tempo (BPM)</label>
-                        <input
-                          type="text"
-                          value={audioTempo}
-                          onChange={(e) => setAudioTempo(e.target.value)}
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Genre Loop Preset</label>
-                        <select
-                          value={audioGenre}
-                          onChange={(e) => setAudioGenre(e.target.value)}
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                        >
-                          <option value="synthwave">Synthwave</option>
-                          <option value="cyber">Cyber Industrial</option>
-                          <option value="orchestral">Cinematic Orchestral</option>
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  {aiStudioSubTab === '3d' && (
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Export Mesh Format</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {[".glb", ".obj", ".fbx"].map((fmt) => (
-                          <button
-                            key={fmt}
-                            onClick={() => setMeshFormat(fmt)}
-                            className={`rounded-xl border py-2 px-3 text-xs font-semibold transition ${
-                              meshFormat === fmt ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300" : "border-white/5 bg-slate-950 text-slate-400"
-                            }`}
-                          >
-                            {fmt}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   {/* Generate Button & Status info */}
                   <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-white/5">
                     <button
@@ -1074,6 +1476,84 @@ export default function DashboardPage() {
                   </div>
 
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Module: NFT Marketplace */}
+          {activeModule === "marketplace" && (
+            <div className="space-y-6 animate-fade-in">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                    <ShoppingBag className="h-6 w-6 text-fuchsia-400" /> NFT Marketplace
+                  </h2>
+                  <p className="text-slate-400 text-xs mt-1">Acquire and sell premium creator assets trustlessly on WCOS.</p>
+                </div>
+                
+                <div className="flex items-center gap-1 bg-slate-900 border border-white/10 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase">
+                  <Info className="h-3.5 w-3.5 text-fuchsia-400" />
+                  <span>Auctions: Coming soon</span>
+                </div>
+              </div>
+
+              {/* Active Listings Grid */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Active Fixed Price Listings</h3>
+                {listings.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center p-12 border border-dashed border-white/10 rounded-3xl text-slate-500">
+                    <ShoppingBag className="h-12 w-12 mb-3 text-slate-600" />
+                    <p className="text-sm font-semibold">No listings found.</p>
+                    <p className="text-xs text-slate-500 mt-1">Go to Creator Dashboard and list your minted NFTs here.</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                    {listings.map((item) => (
+                      <div key={item.id} className="rounded-2xl border border-white/5 bg-slate-900/30 overflow-hidden flex flex-col justify-between shadow-lg">
+                        <div>
+                          <div className="relative aspect-square">
+                            <img src={item.imageUrl} alt={item.name} className="h-full w-full object-cover" />
+                            <span className="absolute bottom-3 left-3 rounded-full bg-slate-950/80 px-2.5 py-0.5 text-[10px] font-bold text-fuchsia-400 border border-fuchsia-500/20 backdrop-blur-md">
+                              {item.price} ETH
+                            </span>
+                          </div>
+                          <div className="p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-sm font-bold text-white truncate">{item.name}</h4>
+                              <span className="text-[8px] bg-white/5 px-2 py-0.5 rounded text-slate-400 font-mono uppercase">
+                                {item.chain}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{item.description}</p>
+                            
+                            <div className="pt-2 text-[9px] font-mono text-slate-500 space-y-1">
+                              <p className="truncate">Seller: {item.seller}</p>
+                              <p className="truncate">Contract: {item.nftAddress}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-4 border-t border-white/5 bg-slate-900/10 flex gap-2">
+                          {item.seller === address ? (
+                            <button
+                              onClick={() => handleCancelListing(item)}
+                              className="w-full rounded-full border border-rose-500/30 bg-rose-500/5 hover:bg-rose-500/10 py-2 text-xs font-semibold text-rose-400 transition"
+                            >
+                              Cancel Listing
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleBuyNFT(item)}
+                              className="w-full rounded-full bg-fuchsia-600 hover:bg-fuchsia-500 py-2 text-xs font-semibold text-white transition"
+                            >
+                              Buy NFT
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1234,6 +1714,40 @@ export default function DashboardPage() {
 
         </main>
       </div>
+
+      {/* Floating Listing Price Modal */}
+      {isListingModalOpen && selectedAssetForListing && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-6 space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => setIsListingModalOpen(false)}
+              className="absolute right-4 top-4 text-slate-400 hover:text-white transition"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <h3 className="text-base font-bold text-white">List NFT for Sale</h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Confirm your fixed listing price. The NFT will be held in the WCOS marketplace escrow contract until purchased or cancelled.
+            </p>
+            <div className="space-y-2">
+              <label className="text-[10px] text-slate-500 uppercase font-bold">Listing Price (ETH)</label>
+              <input
+                type="text"
+                value={listingPrice}
+                onChange={(e) => setListingPrice(e.target.value)}
+                placeholder="0.05"
+                className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-500 font-mono"
+              />
+            </div>
+            <button
+              onClick={submitListing}
+              className="w-full rounded-full bg-gradient-to-r from-fuchsia-500 to-indigo-600 py-3 text-xs font-semibold text-white transition hover:opacity-95"
+            >
+              Approve & List NFT
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Floating AI Assistant Integration */}
       <ChatAssistant
