@@ -1,0 +1,80 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String             @id @default(uuid())
+  walletAddress String             @unique
+  ensName       String?
+  role          String             @default("CREATOR") // CREATOR, DEVELOPER, DAO_MEMBER, ADMIN
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  contracts     DeployedContract[]
+  aiAssets      AiAsset[]
+  auditLogs     AuditLog[]
+  organizations OrganizationMember[]
+}
+
+model Organization {
+  id          String               @id @default(uuid())
+  name        String
+  billingPlan String               @default("FREE")
+  createdAt   DateTime             @default(now())
+  members     OrganizationMember[]
+  contracts   DeployedContract[]
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String
+  role           String       @default("MEMBER") // ADMIN, DEVELOPER, CREATOR, AUDITOR
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+}
+
+model DeployedContract {
+  id              String        @id @default(uuid())
+  ownerId         String
+  organizationId  String?
+  contractAddress String
+  network         String        // base-mainnet, base-sepolia, etc.
+  contractType    String        // ERC20, ERC721, ERC1155, DAO_GOVERNOR, VESTING
+  abi             Json
+  txHash          String
+  status          String        @default("ACTIVE") // PENDING, ACTIVE, PAUSED
+  createdAt       DateTime      @default(now())
+  owner           User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@unique([contractAddress, network])
+}
+
+model AiAsset {
+  id             String   @id @default(uuid())
+  userId         String
+  prompt         String
+  enhancedPrompt String?
+  stylePreset    String?
+  imageUrl       String
+  metadataUrl    String?
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}

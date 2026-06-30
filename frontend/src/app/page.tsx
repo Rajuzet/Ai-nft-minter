@@ -138,6 +138,12 @@ export default function HomePage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-4">
+            <a
+              href="/dashboard"
+              className="rounded-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-fuchsia-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/20 hover:scale-105 active:scale-95 transition-all duration-300"
+            >
+              Enter WCOS Console
+            </a>
             <ConnectButton showBalance={false} chainStatus="icon" />
           </div>
         </header>

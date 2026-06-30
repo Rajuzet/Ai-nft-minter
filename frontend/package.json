@@ -8,23 +8,28 @@
     "start": "next start"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.382.0",
+    "@aws-sdk/client-s3": "^3.382.0",
+    "@rainbow-me/rainbowkit": "^2.2.11",
+    "@tanstack/react-query": "^5.0.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.42.1",
+    "lucide-react": "^1.22.0",
     "next": "14.2.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "wagmi": "^2.9.0",
-    "@rainbow-me/rainbowkit": "^2.2.11",
-    "@tanstack/react-query": "^5.0.0",
+    "tailwind-merge": "^3.6.0",
     "viem": "^2.52.2",
-    "@aws-sdk/client-bedrock-runtime": "^3.382.0",
-    "@aws-sdk/client-s3": "^3.382.0"
+    "wagmi": "^2.9.0",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@types/node": "^20.14.2",
+    "@types/react": "^18.3.4",
+    "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.36",
     "tailwindcss": "^3.4.5",
-    "typescript": "^5.6.2",
-    "@types/node": "^20.14.2",
-    "@types/react": "^18.3.4",
-    "@types/react-dom": "^18.3.0"
+    "typescript": "^5.6.2"
   }
 }
