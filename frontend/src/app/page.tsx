@@ -1,379 +1,367 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { parseEther } from "viem";
+import { useAccount } from "wagmi";
+import {
+  Sparkles, BarChart2, Coins, Users, Shield, ChevronRight,
+  Zap, Globe, Layers, Package, ArrowRight, Star, Check,
+  Bot, Cpu, Lock
+} from "lucide-react";
 
-const contractAbi = [
+const FEATURES = [
   {
-    inputs: [
-      { internalType: "address", name: "recipient", type: "address" },
-      { internalType: "string", name: "_tokenURI", type: "string" }
-    ],
-    name: "mintAINFT",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "payable",
-    type: "function"
-  }
+    icon: Sparkles,
+    title: "AI Art Studio",
+    description: "Generate stunning NFT artwork with AI. Cyberpunk, anime, abstract — one prompt away.",
+    color: "from-cyan-500 to-indigo-500",
+    glow: "shadow-cyan-500/20",
+  },
+  {
+    icon: Package,
+    title: "Collection Builder",
+    description: "Deploy ERC-721 and ERC-1155 collections with royalties, traits, and unlockable content.",
+    color: "from-indigo-500 to-fuchsia-500",
+    glow: "shadow-indigo-500/20",
+  },
+  {
+    icon: Layers,
+    title: "NFT Marketplace",
+    description: "List, bid, and trade NFTs with on-chain price discovery and zero hidden fees.",
+    color: "from-fuchsia-500 to-rose-500",
+    glow: "shadow-fuchsia-500/20",
+  },
+  {
+    icon: Coins,
+    title: "DeFi Center",
+    description: "Swap tokens, stake for yield, and manage your Web3 portfolio — all in one place.",
+    color: "from-amber-500 to-orange-500",
+    glow: "shadow-amber-500/20",
+  },
+  {
+    icon: Users,
+    title: "DAO Governance",
+    description: "Launch community DAOs with on-chain voting, proposal lifecycles, and treasury vaults.",
+    color: "from-teal-500 to-emerald-500",
+    glow: "shadow-teal-500/20",
+  },
+  {
+    icon: Bot,
+    title: "AI Orchestrator",
+    description: "Natural language → action. Describe what to build and the AI sets it up instantly.",
+    color: "from-violet-500 to-indigo-500",
+    glow: "shadow-violet-500/20",
+  },
 ];
 
-const ART_STYLES = [
-  { id: "none", name: "None (Raw Prompt)", suffix: "" },
-  { id: "cyberpunk", name: "Cyberpunk", suffix: ", cyberpunk aesthetic, neon lights, high tech, low life, highly detailed, futuristic city, 8k resolution, blade runner style" },
-  { id: "cinematic", name: "Cinematic", suffix: ", cinematic lighting, dramatic shadows, photorealistic, 35mm lens, depth of field, detailed textures, masterpiece" },
-  { id: "anime", name: "Anime", suffix: ", gorgeous modern anime style, makoto shinkai aesthetic, vibrant colors, detailed sky, highly polished, digital art" },
-  { id: "retro", name: "Retro Futurism", suffix: ", synthwave style, retro-futuristic, vaporwave, 1980s sci-fi art, sunset grid background, chrome reflections" },
-  { id: "abstract", name: "Abstract Expressionism", suffix: ", abstract painting style, thick brush strokes, rich oil textures, complex geometry, emotional color palette, modern art gallery piece" }
+const STATS = [
+  { label: "Creators", value: "1,240+" },
+  { label: "NFTs Minted", value: "48,900+" },
+  { label: "Total Volume", value: "$12.4M" },
+  { label: "Active DAOs", value: "18" },
 ];
 
-export default function HomePage() {
-  const { address, isConnected } = useAccount();
-  const [prompt, setPrompt] = useState("");
-  const [selectedStyle, setSelectedStyle] = useState("cyberpunk");
-  const [metadataUrl, setMetadataUrl] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  const [statusMessage, setStatusMessage] = useState("Ready to generate premium AI art.");
-  const [isLoading, setIsLoading] = useState(false);
+const PLANS = [
+  {
+    name: "Creator Free",
+    price: "Free",
+    desc: "Perfect for exploring the platform.",
+    features: ["5 AI art generations/month", "1 NFT collection", "Basic analytics", "Base Sepolia testnet"],
+    cta: "Start Free",
+    highlight: false,
+  },
+  {
+    name: "Creator Pro",
+    price: "$29/mo",
+    desc: "For serious Web3 creators.",
+    features: ["Unlimited AI generations", "Unlimited collections", "Advanced analytics", "DeFi & DAO access", "Creator profile", "Priority support"],
+    cta: "Start Pro",
+    highlight: true,
+  },
+  {
+    name: "Studio",
+    price: "$99/mo",
+    desc: "For agencies and power users.",
+    features: ["Everything in Pro", "Revenue splitter contracts", "Membership NFTs", "API access", "White-label dashboard", "Dedicated account manager"],
+    cta: "Contact Sales",
+    highlight: false,
+  },
+];
 
-  const contractAddress = process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS;
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+// Animated gradient orbs background
+function OrbBackground() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute -top-32 -left-32 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl animate-pulse" />
+      <div className="absolute top-1/3 -right-24 h-80 w-80 rounded-full bg-fuchsia-500/10 blur-3xl animate-pulse [animation-delay:1500ms]" />
+      <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl animate-pulse [animation-delay:3000ms]" />
+    </div>
+  );
+}
 
-  // Wagmi v2 contract write hooks
-  const { data: hash, writeContract, error: writeError, isPending: isMinting } = useWriteContract();
-  const { isLoading: isWaitingForTx, isSuccess: isMintSuccess } = useWaitForTransactionReceipt({ hash });
+export default function LandingPage() {
+  const { isConnected, address } = useAccount();
+  const [mounted, setMounted] = useState(false);
 
-  const isMintProcessActive = isMinting || isWaitingForTx;
+  useEffect(() => { setMounted(true); }, []);
 
-  useEffect(() => {
-    if (isMintSuccess) {
-      setStatusMessage("Success! Your AI NFT has been minted and secured on-chain.");
-    }
-  }, [isMintSuccess]);
-
-  useEffect(() => {
-    if (writeError) {
-      setStatusMessage(`Mint failed: ${writeError.message || "User rejected or insufficient gas"}`);
-      console.error(writeError);
-    }
-  }, [writeError]);
-
-  const generateArt = async () => {
-    if (!prompt.trim()) {
-      setStatusMessage("Please enter a detailed prompt before generating art.");
-      return;
-    }
-
-    setIsLoading(true);
-    setStatusMessage("Requesting AI art generation from Amazon Bedrock...");
-
-    // Append style suffix to the user's prompt
-    const styleObj = ART_STYLES.find((s) => s.id === selectedStyle);
-    const fullPrompt = prompt.trim() + (styleObj ? styleObj.suffix : "");
-
-    try {
-      const response = await fetch(`${backendUrl}/api/generate-art`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: fullPrompt })
-      });
-
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Generation failed");
-
-      setMetadataUrl(payload.metadataUrl);
-      setImageUrl(payload.imageUrl);
-      setStatusMessage("Art generated and uploaded to IPFS/S3. Ready to mint!");
-    } catch (error: any) {
-      console.error(error);
-      setStatusMessage(error.message ? `Error: ${error.message}` : "Unable to generate art. Check backend connectivity.");
-    } finally {
-      setIsLoading(false);
-    }
+  const handleEnterApp = () => {
+    window.location.href = "/dashboard";
   };
-
-  const handleMint = () => {
-    if (!isConnected || !address) {
-      setStatusMessage("Please connect your wallet first.");
-      return;
-    }
-    if (!metadataUrl) {
-      setStatusMessage("No metadata URL found. Please generate art first.");
-      return;
-    }
-    if (!contractAddress || contractAddress.startsWith("0xYour")) {
-      setStatusMessage("Smart contract address is not configured. Update NEXT_PUBLIC_AINFT_MINTER_ADDRESS in .env.local");
-      return;
-    }
-
-    setStatusMessage("Confirm transaction in your wallet...");
-
-    writeContract({
-      address: contractAddress as `0x${string}`,
-      abi: contractAbi,
-      functionName: "mintAINFT",
-      args: [address, metadataUrl],
-      value: parseEther("0.005")
-    });
-  };
-
-  const isContractConfigured = contractAddress && !contractAddress.startsWith("0xYour");
 
   return (
-    <main className="min-h-screen px-4 py-10 md:px-8">
-      <div className="mx-auto max-w-7xl">
-        {/* Top Navbar */}
-        <header className="mb-12 flex flex-col gap-6 rounded-3xl border border-white/10 bg-slate-900/40 p-6 backdrop-blur-xl md:flex-row md:items-center md:justify-between shadow-2xl">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-2xl bg-gradient-to-tr from-cyan-400 to-fuchsia-500 p-[2px] shadow-lg shadow-cyan-500/20">
-              <div className="flex h-full w-full items-center justify-center rounded-[14px] bg-slate-950 text-xl font-black text-cyan-400">
-                A
-              </div>
-            </div>
-            <div>
-              <span className="text-xs font-semibold uppercase tracking-[0.3em] bg-gradient-to-r from-cyan-400 to-fuchsia-400 bg-clip-text text-transparent">
-                Next-Gen AI Minting
-              </span>
-              <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">AI Studio Collective</h1>
-            </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans overflow-x-hidden">
+
+      {/* ── NAV ──────────────────────────────────────────────────────────────── */}
+      <nav className="fixed top-0 left-0 right-0 z-50 h-16 border-b border-white/5 bg-slate-950/80 backdrop-blur-xl flex items-center justify-between px-6 md:px-12">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-cyan-400 via-indigo-500 to-fuchsia-500 p-[2px]">
+            <div className="flex h-full w-full items-center justify-center rounded-[8px] bg-slate-950 font-black text-cyan-400 text-sm">W</div>
           </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <a
-              href="/dashboard"
-              className="rounded-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-fuchsia-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/20 hover:scale-105 active:scale-95 transition-all duration-300"
-            >
-              Enter WCOS Console
-            </a>
-            <ConnectButton showBalance={false} chainStatus="icon" />
-          </div>
-        </header>
+          <span className="text-sm font-black tracking-tight bg-gradient-to-r from-cyan-400 via-indigo-300 to-fuchsia-400 bg-clip-text text-transparent">
+            WCOS
+          </span>
+        </div>
 
-        {/* Configuration Alert */}
-        {!isContractConfigured && (
-          <div className="mb-8 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-amber-200 shadow-lg backdrop-blur-md flex items-center gap-4">
-            <div className="h-8 w-8 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-500 font-bold flex-shrink-0">
-              !
-            </div>
-            <div>
-              <p className="font-semibold">Smart Contract Address Pending</p>
-              <p className="text-sm text-amber-200/80 mt-1">
-                The minter contract address is not configured yet. Complete the smart contract deployment step and update your env variables to enable minting.
-              </p>
-            </div>
-          </div>
-        )}
+        <div className="hidden md:flex items-center gap-6 text-xs font-semibold text-slate-400">
+          <a href="#features" className="hover:text-white transition">Features</a>
+          <a href="#stats" className="hover:text-white transition">Ecosystem</a>
+          <a href="#pricing" className="hover:text-white transition">Pricing</a>
+          <a href="http://localhost:4000/api/docs" target="_blank" rel="noreferrer" className="hover:text-white transition">API Docs</a>
+        </div>
 
-        {/* Dashboard Grid */}
-        <section className="grid gap-8 lg:grid-cols-[1.3fr_1fr]">
-          
-          {/* Left Panel: Creator Tools */}
-          <div className="space-y-6 rounded-3xl border border-white/5 bg-slate-900/30 p-6 backdrop-blur-xl shadow-2xl">
-            <h2 className="text-xl font-semibold text-white flex items-center gap-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-400 text-sm">1</span>
-              Configure Artwork Parameters
-            </h2>
-
-            {/* Prompt Textarea */}
-            <div className="space-y-2">
-              <label htmlFor="prompt" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Creative prompt description
-              </label>
-              <textarea
-                id="prompt"
-                rows={5}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-slate-950/60 px-5 py-4 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-cyan-400/70 focus:ring-1 focus:ring-cyan-400/50 focus:bg-slate-950"
-                placeholder="Describe the masterpiece you want the AI to create (e.g. 'A futuristic robot painter in an overgrown garden, cosmic dust, photorealistic')..."
-              />
-            </div>
-
-            {/* Art Style Selector */}
-            <div className="space-y-3">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Choose Art Style Preset
-              </label>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {ART_STYLES.map((style) => (
-                  <button
-                    key={style.id}
-                    type="button"
-                    onClick={() => setSelectedStyle(style.id)}
-                    className={`flex flex-col items-start rounded-2xl border p-4 text-left transition ${
-                      selectedStyle === style.id
-                        ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300 shadow-md shadow-cyan-500/5"
-                        : "border-white/5 bg-slate-950/30 text-slate-400 hover:border-white/10 hover:bg-slate-900/20"
-                    }`}
-                  >
-                    <span className="text-sm font-semibold">{style.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Generation CTA */}
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between pt-4">
-              <button
-                type="button"
-                onClick={generateArt}
-                disabled={isLoading}
-                className="relative inline-flex items-center justify-center overflow-hidden rounded-full bg-gradient-to-r from-cyan-500 to-fuchsia-500 p-[2px] font-semibold text-white shadow-lg transition hover:shadow-cyan-500/20 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <span className="flex items-center justify-center rounded-full bg-slate-950 px-8 py-3.5 text-sm transition hover:bg-transparent">
-                  {isLoading ? (
-                    <>
-                      <svg className="mr-3 h-4 w-4 animate-spin text-cyan-400" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Creating...
-                    </>
-                  ) : (
-                    "Generate AI Masterpiece"
-                  )}
-                </span>
-              </button>
-
-              <div className="flex-1 rounded-2xl bg-slate-950/80 px-5 py-4 text-xs leading-relaxed text-slate-400 border border-white/5 shadow-inner">
-                <span className="font-bold text-cyan-400">System Status:</span> {statusMessage}
-              </div>
-            </div>
-
-            {/* Meta Data Outputs */}
-            <div className="grid gap-4 pt-4 sm:grid-cols-2">
-              <div className="rounded-2xl border border-white/5 bg-slate-950/40 p-4">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Metadata Asset URL</p>
-                <p className="mt-2 break-all text-xs font-mono text-cyan-300">
-                  {metadataUrl ? (
-                    <a href={metadataUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                      {metadataUrl}
-                    </a>
-                  ) : (
-                    "Waiting for generation..."
-                  )}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-white/5 bg-slate-950/40 p-4">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Recipient Wallet</p>
-                <p className="mt-2 text-xs font-mono text-slate-300">
-                  {address ? `${address.slice(0, 10)}...${address.slice(-8)}` : "Connect Wallet"}
-                </p>
-              </div>
-            </div>
-
-            {/* Mint Action */}
-            <button
-              type="button"
-              onClick={handleMint}
-              disabled={isMintProcessActive || !metadataUrl || !address || !isContractConfigured}
-              className="mt-6 flex w-full items-center justify-center gap-3 rounded-full bg-gradient-to-r from-violet-600 to-indigo-600 px-6 py-4 text-sm font-semibold text-white shadow-xl transition hover:from-violet-500 hover:to-indigo-500 hover:shadow-indigo-500/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {isMintProcessActive ? (
-                <>
-                  <svg className="h-5 w-5 animate-spin text-white" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  {isMinting ? "Awaiting Wallet Signature..." : "Minting NFT on Base..."}
-                </>
-              ) : (
-                <>
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  Mint Premium NFT (0.005 ETH)
-                </>
+        <div className="flex items-center gap-3">
+          {mounted && (
+            <>
+              <ConnectButton showBalance={false} chainStatus="icon" />
+              {isConnected && (
+                <button onClick={handleEnterApp}
+                  className="hidden md:flex items-center gap-1.5 rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 px-4 py-2 text-xs font-bold text-white hover:opacity-90 active:scale-95 transition">
+                  Open Console <ChevronRight className="h-3 w-3" />
+                </button>
               )}
-            </button>
+            </>
+          )}
+        </div>
+      </nav>
+
+      {/* ── HERO ─────────────────────────────────────────────────────────────── */}
+      <section className="relative flex flex-col items-center justify-center min-h-screen pt-16 px-6 text-center">
+        <OrbBackground />
+
+        <div className="relative z-10 max-w-4xl mx-auto space-y-6">
+          {/* Badge */}
+          <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/5 px-4 py-1.5 text-[11px] font-bold text-cyan-400 uppercase tracking-widest">
+            <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />
+            Now on Base Network — Phase 5 Complete
           </div>
 
-          {/* Right Panel: Live NFT Canvas Preview */}
-          <div className="rounded-3xl border border-white/5 bg-slate-900/30 p-6 backdrop-blur-xl shadow-2xl flex flex-col justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-white flex items-center gap-3 mb-6">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-fuchsia-500/20 text-fuchsia-400 text-sm">2</span>
-                Marketplace NFT Preview
-              </h2>
+          {/* Headline */}
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-black tracking-tight leading-tight">
+            The{" "}
+            <span className="bg-gradient-to-r from-cyan-400 via-indigo-400 to-fuchsia-400 bg-clip-text text-transparent">
+              AI-Powered
+            </span>
+            <br />
+            Web3 Creator OS
+          </h1>
 
-              {/* The Art Piece Box */}
-              <div className="relative group overflow-hidden rounded-2xl border border-white/10 bg-slate-950 aspect-square flex items-center justify-center shadow-inner">
-                {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt="Generated NFT"
-                    className="h-full w-full object-cover rounded-2xl transition duration-500 group-hover:scale-105"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center text-center p-6">
-                    <div className="relative mb-4">
-                      <div className="absolute inset-0 rounded-full bg-cyan-400/20 blur-xl animate-pulse" />
-                      <div className="relative h-16 w-16 rounded-full border border-white/20 flex items-center justify-center bg-slate-900">
-                        <svg className="h-8 w-8 text-slate-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375 0 11-.75 0 .375 0 01.75 0z" />
-                        </svg>
-                      </div>
-                    </div>
-                    <p className="text-sm font-semibold text-slate-300">Awaiting AI Art Canvas</p>
-                    <p className="text-xs text-slate-500 mt-2 max-w-xs">Your generated art preview, token traits, and on-chain details will assemble here automatically.</p>
-                  </div>
-                )}
+          <p className="text-base md:text-lg text-slate-400 max-w-2xl mx-auto leading-relaxed">
+            Mint AI-generated NFTs, launch collections, run a marketplace, govern a DAO, and manage DeFi — all from a single creator operating system built on Base Network.
+          </p>
 
-                {/* Status Badge overlay */}
-                {imageUrl && (
-                  <div className="absolute top-4 right-4">
-                    {isMintSuccess ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400 border border-emerald-500/20 backdrop-blur-md shadow-lg shadow-emerald-500/10">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                        On-Chain Minted
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-400 border border-cyan-500/20 backdrop-blur-md shadow-lg">
-                        Unminted Draft
-                      </span>
-                    )}
+          {/* CTAs */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+            <button onClick={handleEnterApp}
+              className="flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-fuchsia-500 px-8 py-3.5 text-sm font-bold text-white shadow-xl shadow-indigo-500/25 hover:opacity-90 active:scale-95 transition">
+              <Sparkles className="h-4 w-4" /> Launch Creator Console
+            </button>
+            <a href="#features"
+              className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-6 py-3.5 text-sm font-semibold text-white hover:bg-white/10 transition">
+              Explore Features <ChevronRight className="h-4 w-4" />
+            </a>
+          </div>
+
+          {/* Trust indicators */}
+          <div className="flex flex-wrap items-center justify-center gap-6 pt-6 text-[11px] text-slate-500 font-semibold">
+            {["Non-custodial", "Open source contracts", "Base Network", "Testnet-first"].map((item) => (
+              <span key={item} className="flex items-center gap-1.5">
+                <Check className="h-3 w-3 text-emerald-400" /> {item}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Scroll indicator */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 text-[10px] text-slate-600 animate-bounce">
+          <ChevronRight className="h-4 w-4 rotate-90" />
+        </div>
+      </section>
+
+      {/* ── STATS ────────────────────────────────────────────────────────────── */}
+      <section id="stats" className="py-16 border-y border-white/5 bg-slate-900/30">
+        <div className="max-w-5xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+          {STATS.map((s, i) => (
+            <div key={i} className="space-y-1">
+              <p className="text-3xl font-black bg-gradient-to-r from-cyan-400 to-indigo-400 bg-clip-text text-transparent">{s.value}</p>
+              <p className="text-xs text-slate-500 font-semibold uppercase tracking-widest">{s.label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── FEATURES ─────────────────────────────────────────────────────────── */}
+      <section id="features" className="py-24 px-6">
+        <div className="max-w-6xl mx-auto space-y-14">
+          <div className="text-center space-y-3">
+            <h2 className="text-3xl md:text-4xl font-black tracking-tight text-white">
+              Everything a Creator Needs
+            </h2>
+            <p className="text-slate-400 max-w-xl mx-auto text-sm leading-relaxed">
+              Six integrated modules — AI Studio, Collections, Marketplace, DeFi, DAO, and AI Orchestrator — working together in one console.
+            </p>
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {FEATURES.map((feat, i) => (
+              <div key={i}
+                className={`group relative rounded-3xl border border-white/5 bg-slate-900/30 p-6 space-y-4 hover:bg-slate-900/60 transition-all duration-300 overflow-hidden`}
+              >
+                {/* Glow on hover */}
+                <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br ${feat.color} rounded-3xl blur-3xl`} style={{ opacity: 0.04 }} />
+
+                <div className={`relative h-11 w-11 rounded-2xl bg-gradient-to-tr ${feat.color} p-[2px] shadow-lg ${feat.glow}`}>
+                  <div className="flex h-full w-full items-center justify-center rounded-[10px] bg-slate-950">
+                    <feat.icon className="h-5 w-5 text-white" />
                   </div>
-                )}
+                </div>
+                <div className="relative space-y-1.5">
+                  <h3 className="text-sm font-bold text-white">{feat.title}</h3>
+                  <p className="text-xs text-slate-400 leading-relaxed">{feat.description}</p>
+                </div>
+                <button
+                  onClick={handleEnterApp}
+                  className="relative flex items-center gap-1.5 text-[11px] font-bold text-slate-500 group-hover:text-white transition"
+                >
+                  Open module <ArrowRight className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── SECURITY STRIP ───────────────────────────────────────────────────── */}
+      <section className="py-12 border-y border-white/5 bg-slate-900/20">
+        <div className="max-w-5xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+          {[
+            { icon: Shield, title: "Non-Custodial", desc: "Your keys, your assets. WCOS never holds your funds or signs on your behalf." },
+            { icon: Cpu, title: "Testnet-First", desc: "All deployments default to Base Sepolia. Zero real funds at risk during development." },
+            { icon: Lock, title: "Audited Contracts", desc: "OpenZeppelin-based contracts with reentrancy guards and access controls." },
+          ].map((item, i) => (
+            <div key={i} className="flex items-start gap-4 p-4 rounded-2xl border border-white/5 bg-slate-900/20">
+              <div className="h-9 w-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                <item.icon className="h-4 w-4 text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">{item.title}</p>
+                <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{item.desc}</p>
               </div>
             </div>
+          ))}
+        </div>
+      </section>
 
-            {/* NFT Traits Card */}
-            {imageUrl && (
-              <div className="mt-6 space-y-4 pt-6 border-t border-white/5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-slate-400">Token Collection</p>
-                    <h3 className="text-lg font-bold text-white mt-1">AI Studio Collective Art</h3>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-slate-400">Mint Price</p>
-                    <p className="text-lg font-bold text-cyan-400 mt-1">0.005 ETH</p>
-                  </div>
-                </div>
-
-                {/* Traits list grid */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-white/5 bg-slate-950/40 p-3">
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Generation Engine</span>
-                    <span className="text-xs font-semibold text-slate-300 block mt-1">Amazon Titan V2</span>
-                  </div>
-                  <div className="rounded-xl border border-white/5 bg-slate-950/40 p-3">
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Royalties Recipient</span>
-                    <span className="text-xs font-semibold text-slate-300 block mt-1">5% (Creator Default)</span>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-white/5 bg-slate-950/40 p-3">
-                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Creative Seed Prompt</span>
-                  <span className="text-xs text-slate-300 block mt-1 italic font-serif line-clamp-2">
-                    "{prompt}"
-                  </span>
-                </div>
-              </div>
-            )}
+      {/* ── PRICING ──────────────────────────────────────────────────────────── */}
+      <section id="pricing" className="py-24 px-6">
+        <div className="max-w-5xl mx-auto space-y-12">
+          <div className="text-center space-y-3">
+            <h2 className="text-3xl md:text-4xl font-black tracking-tight text-white">Simple, Creator-First Pricing</h2>
+            <p className="text-slate-400 text-sm">No lock-in. Upgrade or cancel anytime.</p>
           </div>
 
-        </section>
-      </div>
-    </main>
+          <div className="grid gap-6 md:grid-cols-3">
+            {PLANS.map((plan, i) => (
+              <div key={i}
+                className={`relative rounded-3xl border p-6 space-y-5 flex flex-col ${
+                  plan.highlight
+                    ? "border-indigo-500/40 bg-indigo-500/5 shadow-2xl shadow-indigo-500/10"
+                    : "border-white/5 bg-slate-900/20"
+                }`}
+              >
+                {plan.highlight && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                    <span className="rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 px-3 py-0.5 text-[10px] font-black text-white uppercase tracking-widest">
+                      Most Popular
+                    </span>
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{plan.name}</p>
+                  <p className="text-3xl font-black text-white mt-1">{plan.price}</p>
+                  <p className="text-xs text-slate-500 mt-1">{plan.desc}</p>
+                </div>
+
+                <ul className="space-y-2.5 flex-1">
+                  {plan.features.map((f, j) => (
+                    <li key={j} className="flex items-center gap-2 text-xs text-slate-300">
+                      <Check className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+
+                <button
+                  onClick={handleEnterApp}
+                  className={`w-full rounded-full py-2.5 text-xs font-bold transition active:scale-95 ${
+                    plan.highlight
+                      ? "bg-gradient-to-r from-cyan-500 to-indigo-500 text-white hover:opacity-90"
+                      : "border border-white/10 text-slate-300 hover:bg-white/5"
+                  }`}
+                >
+                  {plan.cta}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── CTA FOOTER ───────────────────────────────────────────────────────── */}
+      <section className="py-24 px-6 text-center relative overflow-hidden border-t border-white/5">
+        <OrbBackground />
+        <div className="relative z-10 max-w-2xl mx-auto space-y-6">
+          <h2 className="text-3xl md:text-4xl font-black tracking-tight text-white">
+            Ready to Build on Web3?
+          </h2>
+          <p className="text-slate-400 text-sm leading-relaxed">
+            Connect your wallet, generate your first AI NFT, and deploy your collection — all in under 5 minutes.
+          </p>
+          <button onClick={handleEnterApp}
+            className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-fuchsia-500 px-10 py-4 text-sm font-bold text-white shadow-2xl shadow-indigo-500/30 hover:opacity-90 active:scale-95 transition">
+            <Zap className="h-4 w-4" /> Launch WCOS Console
+          </button>
+        </div>
+      </section>
+
+      {/* ── FOOTER ───────────────────────────────────────────────────────────── */}
+      <footer className="border-t border-white/5 bg-slate-950 py-8 px-6 text-center">
+        <div className="flex flex-col md:flex-row items-center justify-between max-w-5xl mx-auto gap-4">
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+            <div className="h-5 w-5 rounded-md bg-gradient-to-tr from-cyan-400 to-indigo-500 flex items-center justify-center text-[8px] font-black text-white">W</div>
+            WCOS — Web3 Creator Operating System
+          </div>
+          <div className="flex items-center gap-6 text-[10px] text-slate-600 font-semibold">
+            <span>Built on Base Network</span>
+            <span>·</span>
+            <span>Powered by OpenZeppelin</span>
+            <span>·</span>
+            <span>AI by Bedrock</span>
+          </div>
+          <p className="text-[10px] text-slate-700">© 2026 WCOS. All rights reserved.</p>
+        </div>
+      </footer>
+    </div>
   );
 }

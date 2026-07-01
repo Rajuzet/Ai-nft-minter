@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.382.0",
@@ -14,20 +15,22 @@
     "@tanstack/react-query": "^5.0.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.42.1",
-    "lucide-react": "^1.22.0",
-    "next": "14.2.5",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
+    "lucide-react": "^0.460.0",
+    "next": "^15.3.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "tailwind-merge": "^3.6.0",
     "viem": "^2.52.2",
     "wagmi": "^2.9.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@types/node": "^20.14.2",
-    "@types/react": "^18.3.4",
-    "@types/react-dom": "^18.3.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.3.4",
     "postcss": "^8.4.36",
     "tailwindcss": "^3.4.5",
     "typescript": "^5.6.2"

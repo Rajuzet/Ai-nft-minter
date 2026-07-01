@@ -9,7 +9,7 @@ import {
   Wallet, RefreshCw, Send, CheckCircle2, ChevronRight, Activity, Sparkles, 
   Sliders, Play, Trash2, Image as ImageIcon, Video, Music, Box, Settings, 
   Database, Plus, Eye, ListFilter, Percent, Globe, AlertTriangle, FileText,
-  Tag, ShoppingBag, X, Info
+  Tag, ShoppingBag, X, Info, BarChart2
 } from "lucide-react";
 import ChatAssistant from "../../components/assistant/ChatAssistant";
 
@@ -828,6 +828,57 @@ export default function DashboardPage() {
             >
               <span className="flex items-center gap-2.5">
                 <Layers className="h-4 w-4" /> Contract Builder
+              </span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+
+            <button
+              onClick={() => window.location.href = "/defi"}
+              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
+            >
+              <span className="flex items-center gap-2.5 text-amber-400">
+                <Coins className="h-4 w-4" /> DeFi Center
+              </span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+
+            <button
+              onClick={() => window.location.href = "/dao"}
+              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
+            >
+              <span className="flex items-center gap-2.5 text-teal-400">
+                <Users className="h-4 w-4" /> DAO Governance
+              </span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+
+            <button
+              onClick={() => window.location.href = "/analytics"}
+              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
+            >
+              <span className="flex items-center gap-2.5 text-indigo-400">
+                <BarChart2 className="h-4 w-4" /> Creator Analytics
+              </span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+
+            <button
+              onClick={() => window.location.href = `/profile/${address || "0x0000000000000000000000000000000000000000"}`}
+              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
+              id="profile-nav-btn"
+            >
+              <span className="flex items-center gap-2.5 text-fuchsia-400">
+                <Users className="h-4 w-4" /> My Profile
+              </span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+
+            <button
+              onClick={() => window.location.href = "/settings"}
+              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
+            >
+              <span className="flex items-center gap-2.5 text-slate-300">
+                <Settings className="h-4 w-4" /> Settings
               </span>
               <ChevronRight className="h-3 w-3 opacity-60" />
             </button>

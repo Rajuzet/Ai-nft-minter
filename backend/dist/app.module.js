@@ -12,12 +12,27 @@ const ai_studio_module_1 = require("./ai-studio/ai-studio.module");
 const contracts_module_1 = require("./contracts/contracts.module");
 const collections_module_1 = require("./collections/collections.module");
 const marketplace_module_1 = require("./marketplace/marketplace.module");
+const defi_module_1 = require("./defi/defi.module");
+const dao_module_1 = require("./dao/dao.module");
+const ai_orchestrator_module_1 = require("./ai-orchestrator/ai-orchestrator.module");
+const analytics_module_1 = require("./analytics/analytics.module");
+const profile_module_1 = require("./profile/profile.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
-        imports: [ai_studio_module_1.AiStudioModule, contracts_module_1.ContractsModule, collections_module_1.CollectionsModule, marketplace_module_1.MarketplaceModule],
+        imports: [
+            ai_studio_module_1.AiStudioModule,
+            contracts_module_1.ContractsModule,
+            collections_module_1.CollectionsModule,
+            marketplace_module_1.MarketplaceModule,
+            defi_module_1.DefiModule,
+            dao_module_1.DaoModule,
+            ai_orchestrator_module_1.AiOrchestratorModule,
+            analytics_module_1.AnalyticsModule,
+            profile_module_1.ProfileModule,
+        ],
         controllers: [],
         providers: [],
     })

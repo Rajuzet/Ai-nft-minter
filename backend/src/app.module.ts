@@ -3,10 +3,26 @@ import { AiStudioModule } from './ai-studio/ai-studio.module';
 import { ContractsModule } from './contracts/contracts.module';
 import { CollectionsModule } from './collections/collections.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
+import { DefiModule } from './defi/defi.module';
+import { DaoModule } from './dao/dao.module';
+import { AiOrchestratorModule } from './ai-orchestrator/ai-orchestrator.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { ProfileModule } from './profile/profile.module';
 
 @Module({
-  imports: [AiStudioModule, ContractsModule, CollectionsModule, MarketplaceModule],
+  imports: [
+    AiStudioModule,
+    ContractsModule,
+    CollectionsModule,
+    MarketplaceModule,
+    DefiModule,
+    DaoModule,
+    AiOrchestratorModule,
+    AnalyticsModule,
+    ProfileModule,
+  ],
   controllers: [],
   providers: [],
 })
 export class AppModule {}
+
