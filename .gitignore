@@ -9,6 +9,8 @@ frontend/out/
 
 # ── NestJS / TypeScript builds ────────────────────────────────────────
 backend/dist/
+backend/prisma/*.db
+backend/prisma/*.db-journal
 
 # ── Environment variables — NEVER COMMIT THESE ───────────────────────
 .env
