@@ -55,13 +55,14 @@ const activityLabels: Record<string, string> = {
   "mint": "Mint", "sale": "Sale", "listing": "Listed", "dao-vote": "DAO Vote",
 };
 
-export default function CreatorProfilePage({ params }: { params: { address: string } }) {
+export default function CreatorProfilePage({ params }: { params: Promise<{ address: string }> }) {
   const { address: connectedAddress } = useAccount();
   const [profile, setProfile] = useState<CreatorProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
-  const profileAddress = params.address;
+  const resolvedParams = React.use(params);
+  const profileAddress = resolvedParams.address;
   const isOwner = connectedAddress?.toLowerCase() === profileAddress?.toLowerCase();
 
   useEffect(() => {

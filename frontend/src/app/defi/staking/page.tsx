@@ -6,7 +6,7 @@ import { useAccount } from "wagmi";
 import {
   Coins, Wallet, Compass, Users, Layers, Sparkles, FileText, ShoppingBag, 
   ChevronRight, Activity, Cpu, RefreshCw, CheckCircle2, X, AlertTriangle, 
-  HelpCircle, Percent
+  HelpCircle, Percent, Globe
 } from "lucide-react";
 
 export default function DefiStakingPage() {

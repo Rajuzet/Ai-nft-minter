@@ -6,7 +6,7 @@ import { useAccount } from "wagmi";
 import { useParams } from "next/navigation";
 import {
   Users, Wallet, Compass, Coins, Layers, Sparkles, FileText, ShoppingBag, 
-  ChevronRight, Activity, Cpu, Plus, Globe, ShieldAlert, Award, FileSpreadsheet
+  ChevronRight, Activity, Cpu, Plus, Globe, ShieldAlert, Award, FileSpreadsheet, RefreshCw
 } from "lucide-react";
 
 interface DaoRecord {

@@ -5,7 +5,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 import {
   Users, Wallet, Compass, Coins, Layers, Sparkles, FileText, ShoppingBag, 
-  ChevronRight, Activity, Cpu, Plus, Globe, ShieldAlert, Award
+  ChevronRight, Activity, Cpu, Plus, Globe, ShieldAlert, Award, RefreshCw
 } from "lucide-react";
 
 interface DaoRecord {
