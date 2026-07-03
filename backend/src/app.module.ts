@@ -1,4 +1,8 @@
 import { Module } from '@nestjs/common';
+import { PrismaModule } from './prisma/prisma.module';
+import { StorageModule } from './storage/storage.module';
+import { AuthModule } from './auth/auth.module';
+import { TransactionsModule } from './transactions/transactions.module';
 import { AiStudioModule } from './ai-studio/ai-studio.module';
 import { ContractsModule } from './contracts/contracts.module';
 import { CollectionsModule } from './collections/collections.module';
@@ -11,6 +15,10 @@ import { ProfileModule } from './profile/profile.module';
 
 @Module({
   imports: [
+    PrismaModule,
+    StorageModule,
+    AuthModule,
+    TransactionsModule,
     AiStudioModule,
     ContractsModule,
     CollectionsModule,
@@ -25,4 +33,3 @@ import { ProfileModule } from './profile/profile.module';
   providers: [],
 })
 export class AppModule {}
-

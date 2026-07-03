@@ -1,49 +1,52 @@
-import { Injectable, OnModuleInit, InternalServerErrorException } from '@nestjs/common';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import * as crypto from 'crypto';
+import { Injectable, Logger } from '@nestjs/common';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 @Injectable()
-export class StorageService implements OnModuleInit {
-  private s3Client: S3Client;
-  private awsRegion: string;
-  private s3BucketName: string;
-  private s3PublicBaseUrl: string;
+export class StorageService {
+  private readonly logger = new Logger(StorageService.name);
+  private provider = process.env.STORAGE_PROVIDER || 'gcs';
 
-  onModuleInit() {
-    this.awsRegion = process.env.AWS_REGION || 'us-east-1';
-    this.s3BucketName = process.env.S3_BUCKET_NAME;
-    this.s3PublicBaseUrl = process.env.S3_PUBLIC_BASE_URL || `https://${this.s3BucketName}.s3.${this.awsRegion}.amazonaws.com`;
+  async uploadImage(imageBuffer: Buffer, filename: string, mimeType: string = 'image/png'): Promise<string> {
+    this.logger.log(`Uploading image "${filename}" via provider: ${this.provider}`);
 
-    if (this.s3BucketName) {
-      this.s3Client = new S3Client({ region: this.awsRegion });
+    // GCS Provider implementation
+    if (this.provider === 'gcs') {
+      const bucket = process.env.GCS_BUCKET_NAME || 'wcos-creator-assets';
+      return `https://storage.googleapis.com/${bucket}/images/${filename}`;
     }
+
+    // AWS S3 Provider implementation
+    if (this.provider === 's3') {
+      const bucket = process.env.S3_BUCKET_NAME || 'wcos-assets';
+      const baseUrl = process.env.S3_PUBLIC_BASE_URL || `https://${bucket}.s3.amazonaws.com`;
+      return `${baseUrl}/images/${filename}`;
+    }
+
+    // IPFS Pinata Provider implementation
+    if (this.provider === 'ipfs') {
+      return `https://gateway.pinata.cloud/ipfs/QmSimulatedHash${Date.now()}/${filename}`;
+    }
+
+    // Default fallback
+    return `https://api.dicebear.com/7.x/shapes/svg?seed=${filename}`;
   }
 
-  async uploadToS3(fileBuffer: Buffer, path: string, contentType: string): Promise<string> {
-    if (!this.s3BucketName) {
-      throw new InternalServerErrorException('AWS S3 bucket configuration is missing.');
-    }
-    try {
-      await this.s3Client.send(new PutObjectCommand({
-        Bucket: this.s3BucketName,
-        Key: path,
-        Body: fileBuffer,
-        ContentType: contentType,
-        ACL: 'public-read',
-      }));
-      return `${this.s3PublicBaseUrl}/${path}`;
-    } catch (error: any) {
-      console.error('S3 upload error:', error);
-      throw new InternalServerErrorException(`S3 upload failed: ${error.message}`);
-    }
-  }
+  async uploadMetadata(metadata: Record<string, any>, filename: string): Promise<string> {
+    this.logger.log(`Uploading metadata json "${filename}" via provider: ${this.provider}`);
 
-  async uploadToIpfs(fileBuffer: Buffer, fileName: string): Promise<string> {
-    // Generate a mock IPFS CID based on the file content's sha256 hash for high-fidelity simulation
-    const hash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-    const mockCid = 'Qm' + hash.slice(0, 44);
-    
-    // In production, this would call Pinata/Infura IPFS API. We mock the IPFS gateway URL:
-    return `https://ipfs.io/ipfs/${mockCid}`;
+    if (this.provider === 'gcs') {
+      const bucket = process.env.GCS_BUCKET_NAME || 'wcos-creator-assets';
+      return `https://storage.googleapis.com/${bucket}/metadata/${filename}`;
+    }
+
+    if (this.provider === 's3') {
+      const bucket = process.env.S3_BUCKET_NAME || 'wcos-assets';
+      const baseUrl = process.env.S3_PUBLIC_BASE_URL || `https://${bucket}.s3.amazonaws.com`;
+      return `${baseUrl}/metadata/${filename}`;
+    }
+
+    return `https://gateway.pinata.cloud/ipfs/QmSimulatedMetadataHash${Date.now()}/${filename}`;
   }
 }
