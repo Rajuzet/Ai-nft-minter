@@ -147,7 +147,7 @@ export class MarketplaceService {
           network: updated.chain,
           type: 'BUY',
           userId: buyer.id,
-          details: { listingId: updated.id, price: updated.price, tokenId: updated.tokenId },
+          details: JSON.stringify({ listingId: updated.id, price: updated.price, tokenId: updated.tokenId }),
         },
       });
 

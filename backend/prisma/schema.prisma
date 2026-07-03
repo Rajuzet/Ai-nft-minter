@@ -1,5 +1,5 @@
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -8,31 +8,31 @@ generator client {
 }
 
 model User {
-  id                  String               @id @default(uuid())
-  walletAddress       String               @unique
-  displayName         String?
-  bio                 String?
-  avatarUrl           String?
-  bannerUrl           String?
-  website             String?
-  twitter             String?
-  discord             String?
-  instagram           String?
-  verified            Boolean              @default(false)
-  nonce               String?
-  role                String               @default("CREATOR") // CREATOR, DEVELOPER, DAO_MEMBER, ADMIN
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  contracts           DeployedContract[]
-  aiAssets            AiAsset[]
-  collections         NftCollection[]
-  listings            MarketplaceListing[] @relation("SellerListings")
-  purchases           MarketplaceListing[] @relation("BuyerPurchases")
-  daoProposals        DaoProposal[]
-  daoVotes            DaoVote[]
-  transactions        TransactionRecord[]
-  auditLogs           AuditLog[]
-  organizations       OrganizationMember[]
+  id            String               @id @default(uuid())
+  walletAddress String               @unique
+  displayName   String?
+  bio           String?
+  avatarUrl     String?
+  bannerUrl     String?
+  website       String?
+  twitter       String?
+  discord       String?
+  instagram     String?
+  verified      Boolean              @default(false)
+  nonce         String?
+  role          String               @default("CREATOR")
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  contracts     DeployedContract[]
+  aiAssets      AiAsset[]
+  collections   NftCollection[]
+  listings      MarketplaceListing[] @relation("SellerListings")
+  purchases     MarketplaceListing[] @relation("BuyerPurchases")
+  daoProposals  DaoProposal[]
+  daoVotes      DaoVote[]
+  transactions  TransactionRecord[]
+  auditLogs     AuditLog[]
+  organizations OrganizationMember[]
 }
 
 model Organization {
@@ -48,7 +48,7 @@ model OrganizationMember {
   id             String       @id @default(uuid())
   organizationId String
   userId         String
-  role           String       @default("MEMBER") // ADMIN, DEVELOPER, CREATOR, AUDITOR
+  role           String       @default("MEMBER")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -60,13 +60,13 @@ model DeployedContract {
   ownerId         String
   organizationId  String?
   contractAddress String
-  network         String        // base-mainnet, base-sepolia, polygon, ethereum, arbitrum
-  contractType    String        // ERC20, ERC721, ERC1155, DAO_GOVERNOR, VESTING, MARKETPLACE, STAKING
+  network         String
+  contractType    String
   name            String?
   symbol          String?
-  abi             Json
+  abi             String        // stored as JSON string (SQLite has no Json type)
   txHash          String
-  status          String        @default("ACTIVE") // PENDING, ACTIVE, PAUSED
+  status          String        @default("ACTIVE")
   createdAt       DateTime      @default(now())
   owner           User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
@@ -83,7 +83,7 @@ model NftCollection {
   symbol          String
   maxSupply       Int                  @default(1000)
   mintedCount     Int                  @default(0)
-  royaltyBps      Int                  @default(500) // 5% = 500 bps
+  royaltyBps      Int                  @default(500)
   coverImage      String?
   description     String?
   status          String               @default("DEPLOYED")
@@ -93,25 +93,25 @@ model NftCollection {
 }
 
 model MarketplaceListing {
-  id              String        @id @default(uuid())
-  collectionId    String?
-  nftAddress      String
-  tokenId         Int
-  sellerId        String
-  buyerId         String?
-  price           String        // in ETH/Token
-  collectionName  String
-  chain           String        @default("base-sepolia")
-  imageUrl        String
-  name            String
-  description     String
-  status          String        @default("ACTIVE") // ACTIVE, SOLD, CANCELLED
-  txHash          String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  seller          User          @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
-  buyer           User?         @relation("BuyerPurchases", fields: [buyerId], references: [id], onDelete: SetNull)
-  collection      NftCollection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  id             String         @id @default(uuid())
+  collectionId   String?
+  nftAddress     String
+  tokenId        Int
+  sellerId       String
+  buyerId        String?
+  price          String
+  collectionName String
+  chain          String         @default("base-sepolia")
+  imageUrl       String
+  name           String
+  description    String
+  status         String         @default("ACTIVE")
+  txHash         String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  seller         User           @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
+  buyer          User?          @relation("BuyerPurchases", fields: [buyerId], references: [id], onDelete: SetNull)
+  collection     NftCollection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
 }
 
 model DaoOrganization {
@@ -122,7 +122,7 @@ model DaoOrganization {
   votingToken     String        @default("WGT")
   threshold       Int           @default(100)
   quorum          Int           @default(10)
-  duration        Int           @default(5760) // blocks
+  duration        Int           @default(5760)
   treasuryAddress String
   createdAt       DateTime      @default(now())
   proposals       DaoProposal[]
@@ -138,7 +138,7 @@ model DaoProposal {
   valueTransferred String          @default("0")
   forVotes         Int             @default(0)
   againstVotes     Int             @default(0)
-  status           String          @default("ACTIVE") // ACTIVE, PASSED, REJECTED, EXECUTED
+  status           String          @default("ACTIVE")
   createdAt        DateTime        @default(now())
   dao              DaoOrganization @relation(fields: [daoId], references: [id], onDelete: Cascade)
   proposer         User            @relation(fields: [proposerId], references: [id], onDelete: Cascade)
@@ -159,29 +159,29 @@ model DaoVote {
 }
 
 model AiAsset {
-  id             String   @id @default(uuid())
-  userId         String
-  prompt         String
-  enhancedPrompt String?
-  stylePreset    String?
-  category       String?
-  imageUrl       String
-  metadataUrl    String?
-  storageProvider String  @default("gcs")
-  createdAt      DateTime @default(now())
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id              String   @id @default(uuid())
+  userId          String
+  prompt          String
+  enhancedPrompt  String?
+  stylePreset     String?
+  category        String?
+  imageUrl        String
+  metadataUrl     String?
+  storageProvider String   @default("local")
+  createdAt       DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TransactionRecord {
-  id            String   @id @default(uuid())
-  userId        String?
-  txHash        String   @unique
-  network       String
-  type          String   // MINT, LIST, BUY, SWAP, DEPLOY, STAKE
-  status        String   @default("CONFIRMED")
-  details       Json?
-  createdAt     DateTime @default(now())
-  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  id        String   @id @default(uuid())
+  userId    String?
+  txHash    String   @unique
+  network   String
+  type      String
+  status    String   @default("CONFIRMED")
+  details   String?  // stored as JSON string
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 model AuditLog {
