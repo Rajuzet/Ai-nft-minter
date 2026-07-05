@@ -1,53 +1,83 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { PrismaService } from './prisma/prisma.service';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
 
-  // Allow frontend origins (add your Vercel domain here when deployed)
+  // Register Global Exception Filter for clear error logging
+  app.useGlobalFilters(new AllExceptionsFilter());
+
+  // Configure CORS allowing frontend origins
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
   app.enableCors({
-    origin: [
-      'http://localhost:3000',
-      'https://*.vercel.app',
-      process.env.FRONTEND_URL || '*',
-    ],
+    origin: (origin, callback) => {
+      if (
+        !origin ||
+        origin === 'http://localhost:3000' ||
+        origin === 'http://127.0.0.1:3000' ||
+        origin === frontendUrl ||
+        /\.vercel\.app$/.test(origin)
+      ) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Allow all in dev mode for maximum compatibility
+      }
+    },
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
+    allowedHeaders: 'Content-Type, Accept, Authorization',
   });
 
-  app.useGlobalPipes(new ValidationPipe({ transform: true }));
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 
-  // Health check route for Railway / load balancers
+  // Register Health & Status Endpoints (GET /health, GET /api/health, GET /api/status, GET /api/v1/health)
   const httpAdapter = app.getHttpAdapter();
-  httpAdapter.get('/api/v1/health', (_req: any, res: any) => {
-    res.json({
-      status: 'ok',
-      version: '1.0.0',
-      service: 'WCOS Backend',
-      timestamp: new Date().toISOString(),
-      env: process.env.NODE_ENV || 'development',
-    });
+  const prismaService = app.get(PrismaService);
+
+  const getHealthPayload = () => ({
+    status: 'ok',
+    version: '1.0.0',
+    service: 'WCOS Backend Gateway',
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV || 'development',
+    database: prismaService.isConnected ? 'connected' : 'fallback-in-memory',
+    chainId: process.env.CHAIN_ID || process.env.NEXT_PUBLIC_DEFAULT_CHAIN_ID || '84532',
+    rpcUrl: process.env.RPC_URL || process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
   });
 
+  httpAdapter.get('/health', (_req: any, res: any) => res.json(getHealthPayload()));
+  httpAdapter.get('/api/health', (_req: any, res: any) => res.json(getHealthPayload()));
+  httpAdapter.get('/api/status', (_req: any, res: any) => res.json({
+    ...getHealthPayload(),
+    storageProvider: process.env.STORAGE_PROVIDER || 'local',
+    contractAddress: process.env.CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS || '0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A',
+  }));
+  httpAdapter.get('/api/v1/health', (_req: any, res: any) => res.json(getHealthPayload()));
+
+  // Swagger Documentation Setup
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Web3 Creator Operating System (WCOS) Backend')
-    .setDescription('WCOS API gateway — AI Studio, Collections, Marketplace, DeFi, DAO, Analytics, Profile')
+    .setTitle('Web3 Creator Operating System (WCOS) Backend API')
+    .setDescription('WCOS API gateway — AI Studio, Collections, Marketplace, DeFi, DAO, Analytics, Profile, SIWE Auth, Transactions')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document);
+  const document = SwaggerModule.setup('api/docs', app, () =>
+    SwaggerModule.createDocument(app, swaggerConfig),
+  );
 
   const port = process.env.PORT || 4000;
   await app.listen(port, '0.0.0.0');
-  console.log(`WCOS Backend API gateway running on: http://0.0.0.0:${port}`);
-  console.log(`Swagger documentation available at: http://localhost:${port}/api/docs`);
-  console.log(`Health check: http://localhost:${port}/api/v1/health`);
+  logger.log(`WCOS Backend API gateway running on: http://localhost:${port}`);
+  logger.log(`Swagger documentation: http://localhost:${port}/api/docs`);
+  logger.log(`Health check endpoints: http://localhost:${port}/health | http://localhost:${port}/api/status`);
 }
 bootstrap();
-
