@@ -37,7 +37,7 @@ export default function SettingsPage() {
     weeklyDigest:     true,
   });
 
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
   const handleSaveProfile = async () => {
     if (!address) {

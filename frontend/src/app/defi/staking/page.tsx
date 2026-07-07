@@ -1,34 +1,50 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 import {
   Coins, Wallet, Compass, Users, Layers, Sparkles, FileText, ShoppingBag, 
   ChevronRight, Activity, Cpu, RefreshCw, CheckCircle2, X, AlertTriangle, 
-  HelpCircle, Percent, Globe
+  HelpCircle, Percent, Globe, Info
 } from "lucide-react";
+import { useChainGuard } from "../../../lib/useChainGuard";
+import { useWeb3Transaction, getTxStatusLabel, parseContractError } from "../../../lib/useWeb3Transaction";
+import { CONTRACT_ADDRESSES, WcosStakingABI, isPlaceholderAddress } from "../../../lib/contracts";
+import { parseUnits } from "viem";
+import { baseSepolia } from "wagmi/chains";
 
 export default function DefiStakingPage() {
   const { address, isConnected } = useAccount();
   const [activeModule] = useState("staking");
   const [selectedChain, setSelectedChain] = useState("base-sepolia");
 
+  const chainGuard = useChainGuard(baseSepolia.id);
+
   const [stakeAmount, setStakeAmount] = useState("100");
-  const [lockDuration, setLockDuration] = useState("90"); // days
-  
+  const [lockDuration, setLockDuration] = useState("90");
   const [stakedBalance, setStakedBalance] = useState("0");
   const [accruedRewards, setAccruedRewards] = useState("0");
-
-  const [isStaking, setIsStaking] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [isClaiming, setIsClaiming] = useState(false);
-  const [txHash, setTxHash] = useState("");
+
+  // ── Real wagmi transactions ────────────────────────────────────────────────
+  const stakeTx = useWeb3Transaction({
+    onSuccess: (txHash) => {
+      setStakedBalance((prev) => (parseFloat(prev) + parseFloat(stakeAmount)).toFixed(4));
+      setAccruedRewards("0.00");
+    },
+    onError: (err) => console.error("Stake failed:", err),
+  });
+
+  const claimTx = useWeb3Transaction({
+    onSuccess: (txHash) => { setAccruedRewards("0"); },
+    onError: (err) => console.error("Claim failed:", err),
+  });
 
   const calculateApy = () => {
-    if (lockDuration === "30") return 8; // 8% APY
-    if (lockDuration === "90") return 12; // 12% APY
-    return 18; // 18% APY for 365 days
+    if (lockDuration === "30") return 8;
+    if (lockDuration === "90") return 12;
+    return 18;
   };
 
   const calculateExpectedReturn = () => {
@@ -40,32 +56,48 @@ export default function DefiStakingPage() {
 
   const handleStakeClick = () => {
     if (!isConnected || parseFloat(stakeAmount) <= 0) return;
+    if (!chainGuard.isCorrectChain) return;
     setIsConfirming(true);
   };
 
   const executeStake = () => {
     setIsConfirming(false);
-    setIsStaking(true);
-    setTimeout(() => {
-      setIsStaking(false);
-      setStakedBalance((prev) => (parseFloat(prev) + parseFloat(stakeAmount)).toString());
+
+    if (isPlaceholderAddress(CONTRACT_ADDRESSES.WcosStaking)) {
+      // [DEV_MODE] Staking contract not deployed — simulate locally
+      setStakedBalance((prev) => (parseFloat(prev) + parseFloat(stakeAmount)).toFixed(4));
       setAccruedRewards("0.00");
-      setTxHash("0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(""));
-    }, 2000);
+      return;
+    }
+
+    // Real on-chain stake call
+    // Amount in WGT tokens (18 decimals assumed)
+    stakeTx.execute({
+      address: CONTRACT_ADDRESSES.WcosStaking,
+      abi: WcosStakingABI,
+      functionName: "stake",
+      args: [parseUnits(stakeAmount, 18)],
+    });
   };
 
   const handleClaim = () => {
-    setIsClaiming(true);
-    setTimeout(() => {
-      setIsClaiming(false);
+    if (isPlaceholderAddress(CONTRACT_ADDRESSES.WcosStaking)) {
+      // [DEV_MODE] simulate reward claim
       setAccruedRewards("0");
-      addTerminalLog("Staking reward claim transaction confirmed on Base Sepolia.");
-    }, 1500);
+      return;
+    }
+
+    claimTx.execute({
+      address: CONTRACT_ADDRESSES.WcosStaking,
+      abi: WcosStakingABI,
+      functionName: "claimRewards",
+      args: [],
+    });
   };
 
-  const addTerminalLog = (log: string) => {
-    console.log(log);
-  };
+  const isStaking = stakeTx.state.isLoading;
+  const isClaiming = claimTx.state.isLoading;
+  const txHash = stakeTx.state.txHash || claimTx.state.txHash;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -236,13 +268,27 @@ export default function DefiStakingPage() {
                 </div>
               </div>
 
-              <button
-                onClick={handleStakeClick}
-                disabled={!isConnected}
-                className="w-full rounded-full bg-gradient-to-r from-amber-500 to-indigo-600 py-3.5 text-xs font-semibold text-white shadow transition hover:opacity-95 disabled:opacity-50"
-              >
-                Stake Tokens
-              </button>
+              {/* Chain guard */}
+              {!isConnected ? (
+                <div className="w-full rounded-full border border-amber-500/25 bg-amber-500/5 py-3.5 text-xs font-semibold text-amber-400 text-center">
+                  Connect wallet to stake
+                </div>
+              ) : !chainGuard.isCorrectChain ? (
+                <button onClick={chainGuard.switchToRequired} disabled={chainGuard.isSwitching}
+                  className="w-full rounded-full border border-rose-500/30 bg-rose-500/5 py-3.5 text-xs font-semibold text-rose-400 hover:bg-rose-500/10 transition disabled:opacity-50">
+                  {chainGuard.isSwitching ? "Switching…" : "Switch to Base Sepolia"}
+                </button>
+              ) : (
+                <button
+                  onClick={handleStakeClick}
+                  disabled={isStaking}
+                  className="w-full rounded-full bg-gradient-to-r from-amber-500 to-indigo-600 py-3.5 text-xs font-semibold text-white shadow transition hover:opacity-95 disabled:opacity-50"
+                >
+                  {isStaking
+                    ? getTxStatusLabel(stakeTx.state.status, { pending_wallet: "Check wallet…", submitted: "Confirming stake…" })
+                    : "Stake Tokens"}
+                </button>
+              )}
             </div>
 
             {/* Earnings Tally Panel */}
@@ -272,15 +318,32 @@ export default function DefiStakingPage() {
                   </div>
                 </div>
 
-                {isStaking && (
-                  <div className="p-3 bg-slate-950 border border-amber-500/20 rounded-2xl flex items-center justify-center gap-2 text-xs text-amber-400 font-semibold animate-pulse">
-                    <RefreshCw className="h-4 w-4 animate-spin" /> Approving & Staking on-chain...
+                {/* Real TX lifecycle status */}
+                {stakeTx.state.status === "pending_wallet" && (
+                  <div className="p-3 bg-cyan-500/5 border border-cyan-500/20 rounded-2xl flex items-center gap-2 text-xs text-cyan-400 font-semibold animate-pulse">
+                    <RefreshCw className="h-4 w-4 animate-spin" /> Waiting for wallet signature…
                   </div>
                 )}
-
-                {txHash && (
-                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-400 text-[11px] font-mono truncate">
-                    Staking Tx Confirmed: {txHash}
+                {stakeTx.state.status === "submitted" && (
+                  <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl flex items-center gap-2 text-xs text-indigo-400">
+                    <RefreshCw className="h-4 w-4 animate-spin" /> Staking submitted — confirming…
+                  </div>
+                )}
+                {stakeTx.state.status === "confirmed" && txHash && (
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-400 text-[11px]">
+                    <div className="flex items-center gap-1.5 font-bold mb-1"><CheckCircle2 className="h-4 w-4" /> Staking Confirmed!</div>
+                    <a href={`https://sepolia.basescan.org/tx/${txHash}`} target="_blank" rel="noreferrer" className="font-mono text-[9px] underline truncate block">{txHash}</a>
+                  </div>
+                )}
+                {stakeTx.state.status === "failed" && (
+                  <div className="p-3 bg-rose-500/5 border border-rose-500/20 rounded-2xl flex items-start gap-2 text-xs text-rose-400">
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                    <span>{stakeTx.state.error}</span>
+                  </div>
+                )}
+                {claimTx.state.status === "confirmed" && (
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-400 text-[11px] flex items-center gap-1.5 font-bold">
+                    <CheckCircle2 className="h-4 w-4" /> Rewards claimed!
                   </div>
                 )}
               </div>

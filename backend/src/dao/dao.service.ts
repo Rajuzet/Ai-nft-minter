@@ -248,4 +248,25 @@ export class DaoService {
       timestamp: updated.createdAt.toISOString(),
     };
   }
+
+  async getUserActivity(address: string) {
+    const normalized = address.toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { walletAddress: normalized },
+      include: { daoProposals: true, daoVotes: { include: { proposal: true } } },
+    });
+
+    if (!user) return { proposals: [], votes: [] };
+
+    return {
+      proposals: user.daoProposals,
+      votes: user.daoVotes.map((v) => ({
+        id: v.id,
+        proposalTitle: v.proposal.title,
+        support: v.support,
+        weight: v.weight,
+        timestamp: v.createdAt.toISOString(),
+      })),
+    };
+  }
 }

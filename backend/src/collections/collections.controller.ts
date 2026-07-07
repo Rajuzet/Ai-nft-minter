@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiProperty } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, HttpCode, HttpStatus, UseGuards, Req } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiProperty, ApiHeader } from '@nestjs/swagger';
 import { CollectionsService, CollectionRecord } from './collections.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { IsNotEmpty, IsString, IsNumber, IsOptional } from 'class-validator';
 
 class CreateCollectionDto {
@@ -89,6 +90,14 @@ export class CollectionsController {
   @ApiResponse({ status: 200, description: 'Success' })
   findAll() {
     return this.collectionsService.findAll();
+  }
+
+  @Get('my-collections')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get authenticated creator collections' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  findMyCollections(@Req() req: any) {
+    return this.collectionsService.findByOwner(req.user.walletAddress);
   }
 
   @Post()

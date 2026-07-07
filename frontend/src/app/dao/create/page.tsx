@@ -22,7 +22,7 @@ export default function DaoCreatePage() {
   const [duration, setDuration] = useState(5760); // blocks (~1 day)
   const [treasuryAddress, setTreasuryAddress] = useState("");
 
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
   const handleCreateDao = async () => {
     if (!name || !desc) {

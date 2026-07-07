@@ -1,0 +1,26 @@
+[
+  {
+    "name": "CoinDesk Web3 & NFTs",
+    "feedUrl": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "category": "Web3",
+    "isTrusted": true
+  },
+  {
+    "name": "Decrypt NFT & Tech",
+    "feedUrl": "https://decrypt.co/feed",
+    "category": "NFT",
+    "isTrusted": true
+  },
+  {
+    "name": "CoinTelegraph DeFi & Market Trends",
+    "feedUrl": "https://cointelegraph.com/rss",
+    "category": "DeFi",
+    "isTrusted": true
+  },
+  {
+    "name": "Base Network Ecosystem Updates",
+    "feedUrl": "https://base.mirror.xyz/feed/atom",
+    "category": "AI + Blockchain",
+    "isTrusted": true
+  }
+]

@@ -22,10 +22,10 @@ export class AiStudioService {
 
   async generateArt(
     prompt: string, 
-    storage: 's3' | 'ipfs' | 'gcs' = 'gcs',
+    storage: 's3' | 'ipfs' | 'gcs' = 'ipfs',
     customMetadata?: CustomMetadataDto,
     walletAddress?: string
-  ): Promise<{ metadataUrl: string; imageUrl: string; metadata: any; assetId?: string }> {
+  ): Promise<{ metadataUrl: string; imageUrl: string; metadata: any; assetId?: string; gatewayUrl?: string }> {
     if (!prompt || typeof prompt !== 'string') {
       throw new BadRequestException('A valid prompt string is required.');
     }
@@ -35,15 +35,6 @@ export class AiStudioService {
       const imageFilename = `${filenameBase}.png`;
       const metadataFilename = `${filenameBase}.json`;
 
-      // 1. Generate or resolve image URL
-      // If Bedrock / OpenAI API keys are provided in env, call them; otherwise generate artwork URL
-      const imageUrl = await this.storageService.uploadImage(
-        Buffer.from(''),
-        imageFilename,
-        'image/png'
-      );
-
-      // 2. Build metadata
       const metadataName = customMetadata?.name || `WCOS Artwork #${Date.now().toString().slice(-4)}`;
       const metadataDesc = customMetadata?.description || `AI-generated NFT artwork created from prompt: "${prompt}".`;
       const metadataCategory = customMetadata?.category || 'Art';
@@ -59,21 +50,52 @@ export class AiStudioService {
             { trait_type: 'Storage Provider', value: storage.toUpperCase() }
           ];
 
-      const metadata = {
-        name: metadataName,
-        description: metadataDesc,
-        image: imageUrl,
-        external_url: metadataExternalUrl,
-        seller_fee_basis_points: metadataRoyalty * 100, // 5% = 500 bps
-        attributes: formattedAttributes,
-        properties: {
-          category: metadataCategory,
-          unlockable_content: metadataUnlockable
-        }
-      };
+      let imageUrl: string;
+      let metadataUrl: string;
+      let gatewayUrl: string | undefined;
+      let metadata: any;
 
-      // 3. Upload metadata to storage driver
-      const metadataUrl = await this.storageService.uploadMetadata(metadata, metadataFilename);
+      if (storage === 'ipfs') {
+        // SVG pattern buffer for demonstration fallback
+        const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500"><rect width="100%" height="100%" fill="#0f172a"/><circle cx="250" cy="250" r="180" fill="#06b6d4" opacity="0.8"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#ffffff" font-family="sans-serif" font-size="24">${metadataName}</text></svg>`;
+        const imageRes = await this.storageService.uploadImageToIPFS(Buffer.from(svgContent), imageFilename, 'image/svg+xml');
+
+        imageUrl = imageRes.ipfsUrl;
+        gatewayUrl = imageRes.gatewayUrl;
+
+        metadata = this.storageService.createNFTMetadata(
+          metadataName,
+          metadataDesc,
+          imageRes.ipfsUrl,
+          formattedAttributes,
+          metadataExternalUrl,
+          {
+            seller_fee_basis_points: metadataRoyalty * 100,
+            properties: {
+              category: metadataCategory,
+              unlockable_content: metadataUnlockable
+            }
+          }
+        );
+
+        const metaRes = await this.storageService.uploadMetadataToIPFS(metadata, metadataFilename);
+        metadataUrl = metaRes.ipfsUrl;
+      } else {
+        imageUrl = await this.storageService.uploadImage(Buffer.from(''), imageFilename, 'image/png');
+        metadata = {
+          name: metadataName,
+          description: metadataDesc,
+          image: imageUrl,
+          external_url: metadataExternalUrl,
+          seller_fee_basis_points: metadataRoyalty * 100,
+          attributes: formattedAttributes,
+          properties: {
+            category: metadataCategory,
+            unlockable_content: metadataUnlockable
+          }
+        };
+        metadataUrl = await this.storageService.uploadMetadata(metadata, metadataFilename);
+      }
 
       // 4. Save record in database if User exists or wallet specified
       let assetId: string | undefined;
@@ -87,7 +109,7 @@ export class AiStudioService {
             data: {
               userId: user.id,
               prompt,
-              imageUrl,
+              imageUrl: gatewayUrl || imageUrl,
               metadataUrl,
               stylePreset: customMetadata?.category || 'cyberpunk',
               storageProvider: storage,
@@ -99,9 +121,10 @@ export class AiStudioService {
 
       return {
         metadataUrl,
-        imageUrl,
+        imageUrl: gatewayUrl || imageUrl,
         metadata,
         assetId,
+        gatewayUrl,
       };
     } catch (error: any) {
       console.error('generateArt error:', error);

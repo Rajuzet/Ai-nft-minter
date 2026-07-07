@@ -5,16 +5,19 @@ const nextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "*.s3.amazonaws.com" },
       { protocol: "https", hostname: "api.dicebear.com" },
+      { protocol: "https", hostname: "gateway.pinata.cloud" },
       { protocol: "https", hostname: "*.ipfs.io" },
+      { protocol: "https", hostname: "images.unsplash.com" },
     ],
   },
-  // Turbopack-compatible module resolution aliases
-  // (replaces the old webpack fallback/alias approach)
-  turbopack: {
-    resolveAlias: {
-      "pino-pretty": { browser: "./src/lib/empty-module.ts" },
-      "@react-native-async-storage/async-storage": { browser: "./src/lib/empty-module.ts" },
-    },
+  webpack: (config) => {
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+      net: false,
+      tls: false,
+    };
+    return config;
   },
 };
 

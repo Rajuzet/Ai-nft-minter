@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Param, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiProperty } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Param, HttpCode, HttpStatus, UseGuards, Req } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiProperty, ApiHeader } from '@nestjs/swagger';
 import { DaoService, DaoRecord, ProposalRecord } from './dao.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { IsNotEmpty, IsString, IsNumber, IsBoolean } from 'class-validator';
 
 class CreateDaoDto {
@@ -89,6 +90,14 @@ export class DaoController {
   @ApiResponse({ status: 200, description: 'Success' })
   findAll() {
     return this.daoService.findAll();
+  }
+
+  @Get('my-activity')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get authenticated user DAO proposals and votes' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  getMyActivity(@Req() req: any) {
+    return this.daoService.getUserActivity(req.user.walletAddress);
   }
 
   @Get(':id')

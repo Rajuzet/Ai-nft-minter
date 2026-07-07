@@ -60,7 +60,7 @@ export default function CreatorProfilePage({ params }: { params: Promise<{ addre
   const [profile, setProfile] = useState<CreatorProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const resolvedParams = React.use(params);
   const profileAddress = resolvedParams.address;
   const isOwner = connectedAddress?.toLowerCase() === profileAddress?.toLowerCase();

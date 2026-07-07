@@ -49,8 +49,8 @@ async function bootstrap() {
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || 'development',
     database: prismaService.isConnected ? 'connected' : 'fallback-in-memory',
-    chainId: process.env.CHAIN_ID || process.env.NEXT_PUBLIC_DEFAULT_CHAIN_ID || '84532',
-    rpcUrl: process.env.RPC_URL || process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
+    chainId: process.env.CHAIN_ID || '84532',
+    rpcUrl: process.env.RPC_URL || 'https://sepolia.base.org',
   });
 
   httpAdapter.get('/health', (_req: any, res: any) => res.json(getHealthPayload()));
@@ -58,26 +58,26 @@ async function bootstrap() {
   httpAdapter.get('/api/status', (_req: any, res: any) => res.json({
     ...getHealthPayload(),
     storageProvider: process.env.STORAGE_PROVIDER || 'local',
-    contractAddress: process.env.CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS || '0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A',
+    contractAddress: process.env.NFT_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || '0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A',
   }));
   httpAdapter.get('/api/v1/health', (_req: any, res: any) => res.json(getHealthPayload()));
 
   // Swagger Documentation Setup
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Web3 Creator Operating System (WCOS) Backend API')
-    .setDescription('WCOS API gateway — AI Studio, Collections, Marketplace, DeFi, DAO, Analytics, Profile, SIWE Auth, Transactions')
+    .setDescription('WCOS API gateway — AI Studio, Collections, Marketplace, DeFi, DAO, Analytics, Profile, SIWE Auth, Transactions, Indexer, News')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
 
-  const document = SwaggerModule.setup('api/docs', app, () =>
+  SwaggerModule.setup('api/docs', app, () =>
     SwaggerModule.createDocument(app, swaggerConfig),
   );
 
-  const port = process.env.PORT || 4000;
+  const port = process.env.PORT || 3001;
   await app.listen(port, '0.0.0.0');
   logger.log(`WCOS Backend API gateway running on: http://localhost:${port}`);
   logger.log(`Swagger documentation: http://localhost:${port}/api/docs`);
-  logger.log(`Health check endpoints: http://localhost:${port}/health | http://localhost:${port}/api/status`);
+  logger.log(`Health check endpoints: http://localhost:${port}/health | http://localhost:${port}/api/health | http://localhost:${port}/api/status`);
 }
 bootstrap();

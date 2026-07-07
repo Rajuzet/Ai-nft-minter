@@ -1,17 +1,35 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { parseEther } from "viem";
+import { useAccount } from "wagmi";
+import { parseEther, parseUnits } from "viem";
 import {
   Terminal, ShieldAlert, Cpu, Layers, Coins, Compass, Users, Rocket, Code2, 
   Wallet, RefreshCw, Send, CheckCircle2, ChevronRight, Activity, Sparkles, 
   Sliders, Play, Trash2, Image as ImageIcon, Video, Music, Box, Settings, 
   Database, Plus, Eye, ListFilter, Percent, Globe, AlertTriangle, FileText,
-  Tag, ShoppingBag, X, Info, BarChart2
+  Tag, ShoppingBag, X, Info, BarChart2, Zap, Key, LogOut, Check
 } from "lucide-react";
 import ChatAssistant from "../../components/assistant/ChatAssistant";
+import {
+  CONTRACT_ADDRESSES,
+  AINFTMinterABI,
+  WcosMarketplaceABI,
+  isPlaceholderAddress,
+} from "../../lib/contracts";
+import { useChainGuard, SUPPORTED_CHAINS } from "../../lib/useChainGuard";
+import { useSiweAuth } from "../../lib/useSiweAuth";
+import {
+  useWeb3Transaction,
+  useWeb3Deploy,
+  getTxStatusLabel,
+  parseContractError,
+  type TxStatus,
+} from "../../lib/useWeb3Transaction";
+import { baseSepolia } from "wagmi/chains";
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 
 interface DeployedContractRecord {
   name: string;
@@ -45,6 +63,7 @@ interface DraftAsset {
   txHash?: string;
   timestamp: string;
   collectionAddress?: string;
+  tokenId?: number;
 }
 
 interface CollectionRecord {
@@ -82,28 +101,128 @@ interface ListingRecord {
   timestamp: string;
 }
 
+// ─── Small shared UI atoms ────────────────────────────────────────────────────
+
+function ChainGuardBanner({
+  isConnected,
+  isCorrectChain,
+  isSwitching,
+  switchToRequired,
+  requiredChainName,
+}: ReturnType<typeof useChainGuard>) {
+  if (!isConnected) {
+    return (
+      <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 flex items-center gap-2 text-xs text-amber-400">
+        <Wallet className="h-4 w-4 flex-shrink-0" />
+        Connect your wallet to proceed.
+      </div>
+    );
+  }
+  if (!isCorrectChain) {
+    return (
+      <div className="rounded-2xl border border-rose-500/25 bg-rose-500/5 px-4 py-3 flex items-center justify-between gap-3 text-xs text-rose-400">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          Wrong network — switch to {requiredChainName} to continue.
+        </div>
+        <button
+          onClick={switchToRequired}
+          disabled={isSwitching}
+          className="flex-shrink-0 rounded-full bg-rose-600 hover:bg-rose-500 px-3 py-1 text-[10px] font-bold text-white transition disabled:opacity-50"
+        >
+          {isSwitching ? "Switching…" : `Switch to ${requiredChainName}`}
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
+
+function TxLifecycleBanner({ status, txHash, error }: { status: TxStatus; txHash?: `0x${string}`; error?: string | null }) {
+  if (status === "idle") return null;
+
+  const explorerBase = "https://sepolia.basescan.org/tx/";
+
+  if (status === "pending_wallet") {
+    return (
+      <div className="rounded-2xl border border-cyan-500/25 bg-cyan-500/5 px-4 py-3 flex items-center gap-2 text-xs text-cyan-400 animate-pulse">
+        <Wallet className="h-4 w-4 flex-shrink-0" />
+        Waiting for wallet signature — check your wallet…
+      </div>
+    );
+  }
+  if (status === "submitted" || status === "preparing") {
+    return (
+      <div className="rounded-2xl border border-indigo-500/25 bg-indigo-500/5 px-4 py-3 flex items-center gap-2 text-xs text-indigo-400">
+        <RefreshCw className="h-4 w-4 flex-shrink-0 animate-spin" />
+        Transaction submitted — waiting for blockchain confirmation…
+        {txHash && (
+          <a
+            href={`${explorerBase}${txHash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline ml-1 text-indigo-300"
+          >
+            View
+          </a>
+        )}
+      </div>
+    );
+  }
+  if (status === "confirmed") {
+    return (
+      <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 flex items-center gap-2 text-xs text-emerald-400">
+        <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+        Transaction confirmed!
+        {txHash && (
+          <a
+            href={`${explorerBase}${txHash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline ml-1 text-emerald-300"
+          >
+            View on BaseScan
+          </a>
+        )}
+      </div>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <div className="rounded-2xl border border-rose-500/25 bg-rose-500/5 px-4 py-3 flex items-start gap-2 text-xs text-rose-400">
+        <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+        <span>{error || "Transaction failed."}</span>
+      </div>
+    );
+  }
+  return null;
+}
+
+// ─── Main dashboard ───────────────────────────────────────────────────────────
+
 export default function DashboardPage() {
   const { address, isConnected, chain } = useAccount();
   const [activeModule, setActiveModule] = useState<string>("home");
   const [selectedChain, setSelectedChain] = useState<string>("base-sepolia");
-  
+
+  const chainGuard = useChainGuard(baseSepolia.id);
+  const siweAuth = useSiweAuth();
+
   // Terminal activity logs
   const [terminalLogs, setTerminalLogs] = useState<string[]>([
     "WCOS Kernel v1.0.0 initialized.",
     "System security scan completed. Status: Secure.",
-    "Awaiting blockchain network wallet connection..."
+    "Awaiting blockchain network wallet connection…",
   ]);
 
   const addTerminalLog = (log: string) => {
-    setTerminalLogs(prev => [...prev.slice(-15), `[${new Date().toLocaleTimeString()}] ${log}`]);
+    setTerminalLogs((prev) => [...prev.slice(-15), `[${new Date().toLocaleTimeString()}] ${log}`]);
   };
 
   const [autoConfigParams, setAutoConfigParams] = useState<Record<string, any>>({});
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
-  // ----------------------------------------------------
-  // Collections Manager State
-  // ----------------------------------------------------
+  // ── Collections ─────────────────────────────────────────────────────────────
   const [collections, setCollections] = useState<CollectionRecord[]>([]);
   const [colName, setColName] = useState("");
   const [colSymbol, setColSymbol] = useState("");
@@ -116,10 +235,9 @@ export default function DashboardPage() {
   const [colMaxSupply, setColMaxSupply] = useState(1000);
   const [colChain, setColChain] = useState("base-sepolia");
   const [colContractType, setColContractType] = useState<"ERC-721" | "ERC-1155">("ERC-721");
-  const [isDeployingCollection, setIsDeployingCollection] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState<string>("");
 
-  const fetchCollections = async () => {
+  const fetchCollections = useCallback(async () => {
     try {
       const res = await fetch(`${backendUrl}/api/v1/collections`);
       if (res.ok) {
@@ -132,360 +250,382 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("fetchCollections error:", err);
     }
-  };
+  }, [backendUrl, selectedCollection]);
 
-  useEffect(() => {
-    fetchCollections();
-  }, []);
-
-  useEffect(() => {
-    if (address && !colRoyaltyReceiver) {
-      setColRoyaltyReceiver(address);
-    }
-  }, [address]);
+  useEffect(() => { fetchCollections(); }, []);
+  useEffect(() => { if (address && !colRoyaltyReceiver) setColRoyaltyReceiver(address); }, [address]);
 
   const saveCollectionDraft = async () => {
-    if (!colName || !colSymbol) {
-      addTerminalLog("Collection Name and Symbol are required.");
-      return;
-    }
-
+    if (!colName || !colSymbol) { addTerminalLog("Collection Name and Symbol are required."); return; }
     try {
       const response = await fetch(`${backendUrl}/api/v1/collections`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: colName,
-          symbol: colSymbol,
-          description: colDesc,
+          name: colName, symbol: colSymbol, description: colDesc,
           logoUrl: colLogo || "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/default-logo.png",
           bannerUrl: colBanner || "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/default-banner.png",
-          category: colCategory,
-          royaltyPercentage: colRoyalty,
+          category: colCategory, royaltyPercentage: colRoyalty,
           royaltyReceiver: colRoyaltyReceiver || address || "0x0000000000000000000000000000000000000000",
-          maxSupply: colMaxSupply,
-          chain: colChain,
-          contractType: colContractType,
-          status: "DRAFT"
-        })
+          maxSupply: colMaxSupply, chain: colChain, contractType: colContractType, status: "DRAFT",
+        }),
       });
-
       if (response.ok) {
         addTerminalLog(`Saved collection draft: ${colName} (${colSymbol})`);
         fetchCollections();
-        // Clear fields
-        setColName("");
-        setColSymbol("");
-        setColDesc("");
+        setColName(""); setColSymbol(""); setColDesc("");
       }
-    } catch (err: any) {
-      addTerminalLog(`Save draft error: ${err.message}`);
-    }
+    } catch (err: any) { addTerminalLog(`Save draft error: ${err.message}`); }
   };
 
-  const deployCollectionContract = async (col: CollectionRecord) => {
-    if (!isConnected) {
-      addTerminalLog("Wallet not connected.");
-      return;
-    }
-    setIsDeployingCollection(true);
-    addTerminalLog(`Initiating deployment for collection: ${col.name} on ${col.chain.toUpperCase()}`);
+  // ── AI & IPFS Creator Studio State ──────────────────────────────────────────
+  const [creationMode, setCreationMode] = useState<"ai" | "upload">("ai");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string>("");
+  const [ipfsUploadStep, setIpfsUploadStep] = useState<"idle" | "uploading_image" | "uploading_metadata" | "ready" | "error">("idle");
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [uploadedIpfsImageUri, setUploadedIpfsImageUri] = useState<string>("");
+  const [uploadedIpfsImageGateway, setUploadedIpfsImageGateway] = useState<string>("");
+  const [uploadedIpfsMetadataUri, setUploadedIpfsMetadataUri] = useState<string>("");
+  const [uploadedIpfsMetadataGateway, setUploadedIpfsMetadataGateway] = useState<string>("");
 
-    setTimeout(async () => {
-      const mockAddress = "0x" + Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-      
-      try {
-        const response = await fetch(`${backendUrl}/api/v1/collections/deploy`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: col.id,
-            contractAddress: mockAddress
-          })
-        });
-
-        if (response.ok) {
-          addTerminalLog(`Successfully deployed collection to ${mockAddress}`);
-          fetchCollections();
-        }
-      } catch (err: any) {
-        addTerminalLog(`Deployment error: ${err.message}`);
-      } finally {
-        setIsDeployingCollection(false);
-      }
-    }, 2000);
-  };
-
-  // ----------------------------------------------------
-  // AI Creator Studio State & Handlers
-  // ----------------------------------------------------
-  const [aiStudioSubTab, setAiStudioSubTab] = useState<'image' | 'video' | 'audio' | '3d'>('image');
+  const [aiStudioSubTab, setAiStudioSubTab] = useState<"image" | "video" | "audio" | "3d">("image");
   const [prompt, setPrompt] = useState("");
   const [selectedStyle, setSelectedStyle] = useState("cyberpunk");
-  const [storageDriver, setStorageDriver] = useState<'s3' | 'ipfs'>('s3');
-  
-  // Metadata Form State
+  const [storageDriver, setStorageDriver] = useState<"s3" | "ipfs">("ipfs");
   const [nftName, setNftName] = useState("");
   const [nftDescription, setNftDescription] = useState("");
   const [nftCategory, setNftCategory] = useState("art");
   const [nftRoyalty, setNftRoyalty] = useState(5);
   const [nftExternalUrl, setNftExternalUrl] = useState("");
   const [nftUnlockable, setNftUnlockable] = useState("");
-
   const [metadataUrl, setMetadataUrl] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [aiStatus, setAiStatus] = useState("Ready.");
   const [isGenerating, setIsGenerating] = useState(false);
-
-  // Custom traits list
   const [traitsList, setTraitsList] = useState<CustomTrait[]>([
     { traitType: "Background", value: "Cyberpunk City Grid", rarity: "10%" },
-    { traitType: "Eyewear", value: "Neon Visor", rarity: "5%" }
+    { traitType: "Eyewear", value: "Neon Visor", rarity: "5%" },
   ]);
   const [newTraitType, setNewTraitType] = useState("");
   const [newTraitValue, setNewTraitValue] = useState("");
   const [newTraitRarity, setNewTraitRarity] = useState("10%");
-
-  // Drafts & Creator Gallery
   const [draftAssets, setDraftAssets] = useState<DraftAsset[]>([]);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
 
-  const contractAddress = process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS;
-
-  // Web3 contracts mint hook for AI NFT
-  const contractAbi = [
-    {
-      inputs: [
-        { internalType: "address", name: "recipient", type: "address" },
-        { internalType: "string", name: "_tokenURI", type: "string" }
-      ],
-      name: "mintAINFT",
-      outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-      stateMutability: "payable",
-      type: "function"
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setValidationError(null);
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml'];
+      if (!allowedTypes.includes(file.type)) {
+        setValidationError(`Invalid file type "${file.type}". Supported formats: PNG, JPG, JPEG, GIF, WEBP, SVG.`);
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        setValidationError(`File size exceeds 10MB limit (${(file.size / (1024 * 1024)).toFixed(2)}MB).`);
+        return;
+      }
+      setSelectedFile(file);
+      const objectUrl = URL.createObjectURL(file);
+      setImagePreviewUrl(objectUrl);
+      setImageUrl(objectUrl);
+      if (!nftName) setNftName(file.name.replace(/\.[^/.]+$/, ""));
+      addTerminalLog(`Selected image file: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
     }
-  ];
+  };
 
-  const { data: mintHash, writeContract, error: mintError, isPending: isMinting } = useWriteContract();
-  const { isLoading: isWaitingForTx, isSuccess: isMintSuccess } = useWaitForTransactionReceipt({ hash: mintHash });
+  const uploadAndPrepareIpfsMetadata = async () => {
+    setValidationError(null);
 
-  useEffect(() => {
-    if (isMintSuccess && mintHash) {
-      addTerminalLog(`Successfully minted AI NFT on-chain. Tx: ${mintHash}`);
+    if (!nftName.trim()) {
+      setValidationError("NFT Title / Name is required.");
+      return;
+    }
+    if (!nftDescription.trim()) {
+      setValidationError("NFT Description is required.");
+      return;
+    }
+
+    if (creationMode === "upload" && !selectedFile && !imageUrl) {
+      setValidationError("Please select an image file to upload or generate an AI artwork.");
+      return;
+    }
+
+    try {
+      setIpfsUploadStep("uploading_image");
+      setAiStatus("Uploading image to IPFS via Pinata...");
+      addTerminalLog("Step 1: Uploading image to IPFS via Pinata provider...");
+
+      let imageUri = uploadedIpfsImageUri;
+      let gatewayImgUrl = uploadedIpfsImageGateway;
+
+      if (creationMode === "upload" && selectedFile) {
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+
+        const imgRes = await fetch(`${backendUrl}/api/v1/ipfs/upload-image`, {
+          method: "POST",
+          body: formData,
+        });
+
+        const imgData = await imgRes.json();
+        if (!imgRes.ok) throw new Error(imgData.message || "Failed to upload image to IPFS");
+
+        imageUri = imgData.ipfsUrl;
+        gatewayImgUrl = imgData.gatewayUrl;
+        setUploadedIpfsImageUri(imageUri);
+        setUploadedIpfsImageGateway(gatewayImgUrl);
+        setImageUrl(gatewayImgUrl);
+        addTerminalLog(`Image pinned to IPFS: ${imageUri}`);
+      } else if (!imageUri && imageUrl) {
+        imageUri = imageUrl.startsWith("ipfs://") ? imageUrl : imageUrl;
+      }
+
+      setIpfsUploadStep("uploading_metadata");
+      setAiStatus("Creating & pinning standard NFT metadata JSON to IPFS...");
+      addTerminalLog("Step 2: Pinning standard NFT metadata JSON to IPFS...");
+
+      const formattedAttributes = traitsList.map((t) => ({ trait_type: t.traitType, value: t.value }));
+
+      const metaRes = await fetch(`${backendUrl}/api/v1/ipfs/upload-metadata`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nftName.trim(),
+          description: nftDescription.trim(),
+          image: imageUri || gatewayImgUrl || imageUrl,
+          attributes: formattedAttributes,
+          external_url: nftExternalUrl.trim() || undefined,
+          walletAddress: address || undefined,
+        }),
+      });
+
+      const metaData = await metaRes.json();
+      if (!metaRes.ok) throw new Error(metaData.message || "Failed to upload metadata to IPFS");
+
+      setUploadedIpfsMetadataUri(metaData.ipfsUrl);
+      setUploadedIpfsMetadataGateway(metaData.gatewayUrl);
+      setMetadataUrl(metaData.ipfsUrl);
+      setIpfsUploadStep("ready");
+      setAiStatus("Metadata pinned to IPFS! Ready for contract minting.");
+      addTerminalLog(`Metadata pinned to IPFS: ${metaData.ipfsUrl}`);
+
+      const newDraft: DraftAsset = {
+        id: crypto.randomUUID(),
+        imageUrl: gatewayImgUrl || imageUrl || "https://gateway.pinata.cloud/ipfs/QmSimulatedHash",
+        metadataUrl: metaData.ipfsUrl,
+        prompt: prompt || `IPFS Upload: ${nftName}`,
+        name: nftName,
+        description: nftDescription,
+        category: nftCategory,
+        royalty: nftRoyalty,
+        externalUrl: nftExternalUrl,
+        unlockableContent: nftUnlockable,
+        traits: [...traitsList],
+        status: "DRAFT",
+        timestamp: new Date().toLocaleTimeString(),
+        collectionAddress: selectedCollection,
+      };
+
+      setDraftAssets((prev) => [newDraft, ...prev]);
+    } catch (err: any) {
+      setIpfsUploadStep("error");
+      setValidationError(err.message || "IPFS upload failed.");
+      setAiStatus("IPFS upload failed.");
+      addTerminalLog(`IPFS Upload Error: ${err.message || err}`);
+    }
+  };
+
+
+  // ── Mint NFT — real wagmi write ──────────────────────────────────────────────
+  const mintTx = useWeb3Transaction({
+    onSuccess: (txHash) => {
+      addTerminalLog(`✓ NFT minted on-chain. Tx: ${txHash}`);
       setAiStatus("NFT Minted successfully!");
-      
-      // Update local draft/gallery status
-      setDraftAssets(prev =>
-        prev.map(asset => {
-          if (asset.id === selectedDraftId || (selectedDraftId === null && asset.metadataUrl === metadataUrl)) {
-            return { ...asset, status: "MINTED", txHash: mintHash };
-          }
-          return asset;
-        })
+      setDraftAssets((prev) =>
+        prev.map((asset) =>
+          asset.id === selectedDraftId ? { ...asset, status: "MINTED", txHash } : asset
+        )
       );
-    }
-  }, [isMintSuccess, mintHash]);
-
-  useEffect(() => {
-    if (mintError) {
-      addTerminalLog(`Minting transaction rejected or failed: ${mintError.message}`);
+    },
+    onError: (err) => {
+      addTerminalLog(`✗ Mint failed: ${err}`);
       setAiStatus("Minting failed.");
-      
-      setDraftAssets(prev =>
-        prev.map(asset => {
-          if (asset.id === selectedDraftId) {
-            return { ...asset, status: "DRAFT" };
-          }
-          return asset;
-        })
+      setDraftAssets((prev) =>
+        prev.map((asset) => (asset.id === selectedDraftId ? { ...asset, status: "DRAFT" } : asset))
       );
-    }
-  }, [mintError]);
+    },
+  });
 
   const addCustomTrait = () => {
     if (!newTraitType.trim() || !newTraitValue.trim()) return;
-    setTraitsList(prev => [...prev, {
-      traitType: newTraitType.trim(),
-      value: newTraitValue.trim(),
-      rarity: newTraitRarity.trim()
-    }]);
-    setNewTraitType("");
-    setNewTraitValue("");
+    setTraitsList((prev) => [...prev, { traitType: newTraitType.trim(), value: newTraitValue.trim(), rarity: newTraitRarity.trim() }]);
+    setNewTraitType(""); setNewTraitValue("");
     addTerminalLog(`Added trait: ${newTraitType} = ${newTraitValue}`);
   };
 
   const removeCustomTrait = (index: number) => {
-    setTraitsList(prev => prev.filter((_, i) => i !== index));
+    setTraitsList((prev) => prev.filter((_, i) => i !== index));
     addTerminalLog("Removed trait attribute.");
   };
 
   const generateArt = async () => {
-    if (!prompt.trim()) {
-      setAiStatus("Enter a prompt first.");
-      return;
-    }
+    if (!prompt.trim()) { setAiStatus("Enter a prompt first."); return; }
     setIsGenerating(true);
-    setAiStatus(`Generating ${aiStudioSubTab}...`);
+    setAiStatus(`Generating ${aiStudioSubTab}…`);
     addTerminalLog(`Requesting multi-modal (${aiStudioSubTab}) generation via driver: ${storageDriver.toUpperCase()}`);
 
-    if (aiStudioSubTab === 'image') {
+    if (aiStudioSubTab === "image") {
       const styleSuffixes: Record<string, string> = {
         cyberpunk: ", cyberpunk aesthetic, neon lights, high tech, futuristic, 8k resolution",
         cinematic: ", cinematic lighting, detailed, dramatic shadows, photorealistic, 35mm lens",
         anime: ", gorgeous modern anime style, makoto shinkai aesthetic, digital art, highly polished",
         retro: ", synthwave style, retro-futuristic, vaporwave, sunset grid, chrome reflections",
-        abstract: ", abstract expressionism, rich textures, complex geometry, emotional color palette"
+        abstract: ", abstract expressionism, rich textures, complex geometry, emotional color palette",
       };
-
       const fullPrompt = prompt.trim() + (styleSuffixes[selectedStyle] || "");
-
       try {
         const response = await fetch(`${backendUrl}/api/v1/ai/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt: fullPrompt,
-            storage: storageDriver,
+            prompt: fullPrompt, storage: storageDriver,
             customMetadata: {
-              name: nftName || undefined,
-              description: nftDescription || undefined,
-              category: nftCategory,
-              traits: traitsList.map(t => ({ traitType: t.traitType, value: t.value })),
-              royaltyPercentage: Number(nftRoyalty),
-              externalUrl: nftExternalUrl || undefined,
-              unlockableContent: nftUnlockable || undefined
-            }
-          })
+              name: nftName || undefined, description: nftDescription || undefined,
+              category: nftCategory, traits: traitsList.map((t) => ({ traitType: t.traitType, value: t.value })),
+              royaltyPercentage: Number(nftRoyalty), externalUrl: nftExternalUrl || undefined,
+              unlockableContent: nftUnlockable || undefined,
+            },
+          }),
         });
-
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Generation request failed");
-
         setMetadataUrl(data.metadataUrl);
         setImageUrl(data.imageUrl);
         setAiStatus(`Art generated & saved on ${storageDriver.toUpperCase()}! Ready to mint.`);
         addTerminalLog(`Art saved on ${storageDriver.toUpperCase()}: ${data.imageUrl}`);
 
-        // Add to drafts list
         const newDraft: DraftAsset = {
-          id: crypto.randomUUID(),
-          imageUrl: data.imageUrl,
-          metadataUrl: data.metadataUrl,
-          prompt: fullPrompt,
-          name: nftName || `AI Artwork #${Date.now()}`,
-          description: nftDescription || "WCOS Custom AI Asset",
-          category: nftCategory,
-          royalty: nftRoyalty,
-          externalUrl: nftExternalUrl,
-          unlockableContent: nftUnlockable,
-          traits: [...traitsList],
-          status: "DRAFT",
-          timestamp: new Date().toLocaleTimeString(),
-          collectionAddress: selectedCollection
+          id: crypto.randomUUID(), imageUrl: data.imageUrl, metadataUrl: data.metadataUrl,
+          prompt: fullPrompt, name: nftName || `AI Artwork #${Date.now()}`,
+          description: nftDescription || "WCOS Custom AI Asset", category: nftCategory,
+          royalty: nftRoyalty, externalUrl: nftExternalUrl, unlockableContent: nftUnlockable,
+          traits: [...traitsList], status: "DRAFT", timestamp: new Date().toLocaleTimeString(),
+          collectionAddress: selectedCollection,
         };
-        setDraftAssets(prev => [newDraft, ...prev]);
-
+        setDraftAssets((prev) => [newDraft, ...prev]);
       } catch (err: any) {
-        console.error(err);
         setAiStatus("Generation failed. Check server connectivity.");
         addTerminalLog(`AI Service Error: ${err.message || err}`);
-      } finally {
-        setIsGenerating(false);
-      }
+      } finally { setIsGenerating(false); }
     } else {
-      // Mock other multi-modal generators
+      // [DEV_MODE] Non-image generation — mock only until multi-modal backend ready
       setTimeout(() => {
         setIsGenerating(false);
-        setAiStatus(`${aiStudioSubTab.toUpperCase()} generated and saved on ${storageDriver.toUpperCase()}!`);
-        addTerminalLog(`Mock ${aiStudioSubTab.toUpperCase()} generation success. File stored on ${storageDriver.toUpperCase()}`);
-        
+        setAiStatus(`[DEV_MODE] ${aiStudioSubTab.toUpperCase()} generation simulated.`);
+        addTerminalLog(`[DEV_MODE] Mock ${aiStudioSubTab.toUpperCase()} generation — not yet connected to real model.`);
+
         let mockImageUrl = "";
-        if (aiStudioSubTab === 'video') mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/cyberpunk-animation.gif";
-        else if (aiStudioSubTab === 'audio') mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/audio-visualizer.png";
-        else if (aiStudioSubTab === '3d') mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/mesh-cube.png";
+        if (aiStudioSubTab === "video") mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/cyberpunk-animation.gif";
+        else if (aiStudioSubTab === "audio") mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/audio-visualizer.png";
+        else if (aiStudioSubTab === "3d") mockImageUrl = "https://wcos-nft-assets.s3.amazonaws.com/mock-assets/mesh-cube.png";
 
         const mockMetaUrl = `https://ipfs.io/ipfs/QmMockMetadata-${Date.now()}`;
-        setImageUrl(mockImageUrl);
-        setMetadataUrl(mockMetaUrl);
+        setImageUrl(mockImageUrl); setMetadataUrl(mockMetaUrl);
 
         const newDraft: DraftAsset = {
-          id: crypto.randomUUID(),
-          imageUrl: mockImageUrl,
-          metadataUrl: mockMetaUrl,
-          prompt: prompt,
-          name: nftName || `AI ${aiStudioSubTab.toUpperCase()} #${Date.now()}`,
-          description: nftDescription || "WCOS Multi-modal Asset",
-          category: nftCategory,
-          royalty: nftRoyalty,
-          externalUrl: nftExternalUrl,
-          unlockableContent: nftUnlockable,
-          traits: [...traitsList],
-          status: "DRAFT",
-          timestamp: new Date().toLocaleTimeString(),
-          collectionAddress: selectedCollection
+          id: crypto.randomUUID(), imageUrl: mockImageUrl, metadataUrl: mockMetaUrl,
+          prompt, name: nftName || `AI ${aiStudioSubTab.toUpperCase()} #${Date.now()}`,
+          description: nftDescription || "WCOS Multi-modal Asset", category: nftCategory,
+          royalty: nftRoyalty, externalUrl: nftExternalUrl, unlockableContent: nftUnlockable,
+          traits: [...traitsList], status: "DRAFT", timestamp: new Date().toLocaleTimeString(),
+          collectionAddress: selectedCollection,
         };
-        setDraftAssets(prev => [newDraft, ...prev]);
-      }, 2000);
+        setDraftAssets((prev) => [newDraft, ...prev]);
+      }, 1500);
     }
   };
 
   const handleMintDraft = (draft: DraftAsset) => {
-    if (!isConnected || !address) {
-      addTerminalLog("Wallet not connected.");
-      return;
-    }
+    if (!isConnected || !address) { addTerminalLog("Wallet not connected."); return; }
+    if (!chainGuard.isCorrectChain) { addTerminalLog("Wrong chain — please switch to Base Sepolia."); return; }
 
-    const mintTargetContract = draft.collectionAddress || contractAddress;
-    if (!mintTargetContract || mintTargetContract.startsWith("0xYour")) {
-      addTerminalLog("Contract address not set in environment or selected collection.");
+    const mintTargetContract = (draft.collectionAddress && !isPlaceholderAddress(draft.collectionAddress))
+      ? draft.collectionAddress
+      : CONTRACT_ADDRESSES.AINFTMinter;
+
+    if (!mintTargetContract || isPlaceholderAddress(mintTargetContract)) {
+      addTerminalLog("Contract address not set — configure NEXT_PUBLIC_AINFT_MINTER_ADDRESS.");
       return;
     }
 
     setSelectedDraftId(draft.id);
-    addTerminalLog(`Initiating minting for draft ${draft.name} on contract ${mintTargetContract}...`);
-    
-    // Update draft status to MINTING
-    setDraftAssets(prev =>
-      prev.map(asset => {
-        if (asset.id === draft.id) {
-          return { ...asset, status: "MINTING" };
-        }
-        return asset;
-      })
+    addTerminalLog(`Initiating mint for "${draft.name}" on ${mintTargetContract}…`);
+    setDraftAssets((prev) =>
+      prev.map((asset) => (asset.id === draft.id ? { ...asset, status: "MINTING" } : asset))
     );
 
-    writeContract({
+    mintTx.execute({
       address: mintTargetContract as `0x${string}`,
-      abi: contractAbi,
+      abi: AINFTMinterABI,
       functionName: "mintAINFT",
       args: [address, draft.metadataUrl],
-      value: parseEther("0.005")
+      value: parseEther("0.005"),
     });
   };
 
-  // ----------------------------------------------------
-  // Marketplace Modules & Operations
-  // ----------------------------------------------------
+  // ── Marketplace ──────────────────────────────────────────────────────────────
   const [listings, setListings] = useState<ListingRecord[]>([]);
   const [isListingModalOpen, setIsListingModalOpen] = useState(false);
   const [listingPrice, setListingPrice] = useState("0.05");
   const [selectedAssetForListing, setSelectedAssetForListing] = useState<DraftAsset | null>(null);
+  const [marketplaceActionId, setMarketplaceActionId] = useState<string | null>(null);
 
-  const fetchListings = async () => {
+  const buyTx = useWeb3Transaction({
+    onSuccess: async (txHash) => {
+      const listing = listings.find((l) => l.id === marketplaceActionId);
+      if (listing) {
+        addTerminalLog(`✓ Purchased "${listing.name}"! Tx: ${txHash}`);
+        try {
+          await fetch(`${backendUrl}/api/v1/marketplace/buy`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: listing.id, buyer: address, txHash }),
+          });
+        } catch { /* non-critical — blockchain is source of truth */ }
+        fetchListings();
+      }
+    },
+    onError: (err) => addTerminalLog(`✗ Purchase failed: ${err}`),
+  });
+
+  const cancelTx = useWeb3Transaction({
+    onSuccess: async (txHash) => {
+      const listing = listings.find((l) => l.id === marketplaceActionId);
+      if (listing) {
+        addTerminalLog(`✓ Listing cancelled. Tx: ${txHash}`);
+        try {
+          await fetch(`${backendUrl}/api/v1/marketplace/cancel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: listing.id }),
+          });
+        } catch { /* non-critical */ }
+        fetchListings();
+      }
+    },
+    onError: (err) => addTerminalLog(`✗ Cancel failed: ${err}`),
+  });
+
+  const fetchListings = useCallback(async () => {
     try {
       const res = await fetch(`${backendUrl}/api/v1/marketplace/listings`);
-      if (res.ok) {
-        const data = await res.json();
-        setListings(data);
-      }
-    } catch (err) {
-      console.error("fetchListings error:", err);
-    }
-  };
+      if (res.ok) setListings(await res.json());
+    } catch (err) { console.error("fetchListings error:", err); }
+  }, [backendUrl]);
 
-  useEffect(() => {
-    fetchListings();
-  }, []);
+  useEffect(() => { fetchListings(); }, []);
 
   const initiateListing = (asset: DraftAsset) => {
     setSelectedAssetForListing(asset);
@@ -494,98 +634,82 @@ export default function DashboardPage() {
 
   const submitListing = async () => {
     if (!selectedAssetForListing) return;
-    addTerminalLog(`Listing NFT ${selectedAssetForListing.name} for ${listingPrice} ETH...`);
-
+    addTerminalLog(`Listing NFT "${selectedAssetForListing.name}" for ${listingPrice} ETH…`);
     try {
       const response = await fetch(`${backendUrl}/api/v1/marketplace/list`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nftAddress: selectedAssetForListing.collectionAddress || contractAddress || "0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A",
-          tokenId: Math.floor(Math.random() * 1000), // simulated token ID
-          seller: address || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-          price: listingPrice,
-          collectionName: "AI Studio Collective",
-          chain: selectedChain,
-          imageUrl: selectedAssetForListing.imageUrl,
-          name: selectedAssetForListing.name,
-          description: selectedAssetForListing.description
-        })
+          nftAddress: selectedAssetForListing.collectionAddress || CONTRACT_ADDRESSES.AINFTMinter,
+          tokenId: selectedAssetForListing.tokenId ?? Math.floor(Math.random() * 1000),
+          seller: address || "0x0000000000000000000000000000000000000000",
+          price: listingPrice, collectionName: "AI Studio Collective", chain: selectedChain,
+          imageUrl: selectedAssetForListing.imageUrl, name: selectedAssetForListing.name,
+          description: selectedAssetForListing.description,
+        }),
       });
-
       if (response.ok) {
-        addTerminalLog(`Successfully listed NFT for sale!`);
-        
-        // Update local status
-        setDraftAssets(prev =>
-          prev.map(asset => {
-            if (asset.id === selectedAssetForListing.id) {
-              return { ...asset, status: "LISTED" };
-            }
-            return asset;
-          })
+        addTerminalLog("Successfully listed NFT for sale!");
+        setDraftAssets((prev) =>
+          prev.map((asset) =>
+            asset.id === selectedAssetForListing.id ? { ...asset, status: "LISTED" } : asset
+          )
         );
-
         fetchListings();
         setIsListingModalOpen(false);
       }
-    } catch (err: any) {
-      addTerminalLog(`Listing error: ${err.message}`);
-    }
+    } catch (err: any) { addTerminalLog(`Listing error: ${err.message}`); }
   };
 
-  const handleBuyNFT = async (listing: ListingRecord) => {
-    if (!isConnected || !address) {
-      addTerminalLog("Connect wallet to purchase.");
+  const handleBuyNFT = (listing: ListingRecord) => {
+    if (!isConnected || !address) { addTerminalLog("Connect wallet to purchase."); return; }
+    if (!chainGuard.isCorrectChain) { addTerminalLog("Wrong chain — switch to Base Sepolia."); return; }
+
+    if (isPlaceholderAddress(CONTRACT_ADDRESSES.WcosMarketplace)) {
+      addTerminalLog("[DEV_MODE] Marketplace contract not deployed — recording buy in backend only.");
+      // DEV_MODE: backend-only purchase record without on-chain call
+      const mockTx = ("0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")) as `0x${string}`;
+      fetch(`${backendUrl}/api/v1/marketplace/buy`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: listing.id, buyer: address, txHash: mockTx }),
+      }).then(() => { addTerminalLog(`[DEV_MODE] Purchase recorded (no on-chain tx). Ref: ${mockTx}`); fetchListings(); });
       return;
     }
 
-    addTerminalLog(`Processing purchase for ${listing.name} for ${listing.price} ETH...`);
-    setTimeout(async () => {
-      const mockTx = "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-      
-      try {
-        const response = await fetch(`${backendUrl}/api/v1/marketplace/buy`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: listing.id,
-            buyer: address,
-            txHash: mockTx
-          })
-        });
-
-        if (response.ok) {
-          addTerminalLog(`Successfully purchased ${listing.name}! Tx: ${mockTx}`);
-          fetchListings();
-        }
-      } catch (err: any) {
-        addTerminalLog(`Purchase error: ${err.message}`);
-      }
-    }, 1500);
+    setMarketplaceActionId(listing.id);
+    addTerminalLog(`Initiating on-chain purchase of "${listing.name}" for ${listing.price} ETH…`);
+    buyTx.execute({
+      address: CONTRACT_ADDRESSES.WcosMarketplace,
+      abi: WcosMarketplaceABI,
+      functionName: "buyToken",
+      args: [listing.nftAddress as `0x${string}`, BigInt(listing.tokenId)],
+      value: parseEther(listing.price),
+    });
   };
 
-  const handleCancelListing = async (listing: ListingRecord) => {
-    addTerminalLog(`Cancelling listing for ${listing.name}...`);
-    try {
-      const response = await fetch(`${backendUrl}/api/v1/marketplace/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: listing.id })
-      });
+  const handleCancelListing = (listing: ListingRecord) => {
+    if (!chainGuard.isCorrectChain) { addTerminalLog("Wrong chain — switch to Base Sepolia."); return; }
 
-      if (response.ok) {
-        addTerminalLog(`Listing cancelled.`);
-        fetchListings();
-      }
-    } catch (err: any) {
-      addTerminalLog(`Cancel listing error: ${err.message}`);
+    if (isPlaceholderAddress(CONTRACT_ADDRESSES.WcosMarketplace)) {
+      addTerminalLog("[DEV_MODE] Marketplace contract not deployed — cancelling in backend only.");
+      fetch(`${backendUrl}/api/v1/marketplace/cancel`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: listing.id }),
+      }).then(() => { addTerminalLog("[DEV_MODE] Listing cancelled in backend."); fetchListings(); });
+      return;
     }
+
+    setMarketplaceActionId(listing.id);
+    addTerminalLog(`Cancelling on-chain listing for "${listing.name}"…`);
+    cancelTx.execute({
+      address: CONTRACT_ADDRESSES.WcosMarketplace,
+      abi: WcosMarketplaceABI,
+      functionName: "cancelListing",
+      args: [listing.nftAddress as `0x${string}`, BigInt(listing.tokenId)],
+    });
   };
 
-  // ----------------------------------------------------
-  // Module 3: Contract Builder State & Handlers
-  // ----------------------------------------------------
+  // ── Contract Builder ──────────────────────────────────────────────────────────
   const [contractType, setContractType] = useState<"ERC-20" | "ERC-721" | "ERC-1155">("ERC-721");
   const [contractName, setContractName] = useState("");
   const [contractSymbol, setContractSymbol] = useState("");
@@ -596,150 +720,173 @@ export default function DashboardPage() {
   const [compiledResult, setCompiledResult] = useState<any>(null);
   const [deployedContracts, setDeployedContracts] = useState<DeployedContractRecord[]>([]);
 
+  // Real deploy using wagmi's useDeployContract
+  const deployWeb3 = useWeb3Deploy({
+    onSuccess: (contractAddress, txHash) => {
+      addTerminalLog(`✓ Contract deployed at ${contractAddress}`);
+      setDeployedContracts((prev) => [
+        {
+          name: contractName, symbol: contractSymbol,
+          address: contractAddress, type: contractType,
+          chain: chain?.name || "Base Sepolia", txHash,
+          timestamp: new Date().toLocaleTimeString(),
+        },
+        ...prev,
+      ]);
+    },
+    onError: (err) => addTerminalLog(`✗ Deploy failed: ${err}`),
+  });
+
+  // ── Blockchain Event Indexer state ──────────────────────────────────────────
+  const [indexerStatus, setIndexerStatus] = useState<{
+    lastProcessedBlock: number;
+    latestBlock: number;
+    indexedEventsCount: number;
+    isSyncing: boolean;
+  }>({ lastProcessedBlock: 0, latestBlock: 0, indexedEventsCount: 0, isSyncing: false });
+
+  const fetchIndexerStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/indexer/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setIndexerStatus(data);
+      }
+    } catch {
+      // non-critical
+    }
+  }, [backendUrl]);
+
+  const triggerManualSync = async () => {
+    addTerminalLog("Triggering manual blockchain event indexer sync...");
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/indexer/sync`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        addTerminalLog(`✓ Indexer sync finished! Scanned blocks ${data.scannedFromBlock} -> ${data.scannedToBlock}. Indexed ${data.newEventsCount} new event(s).`);
+        fetchIndexerStatus();
+        fetchListings();
+      }
+    } catch (err: any) {
+      addTerminalLog(`✗ Indexer sync failed: ${err.message}`);
+    }
+  };
+
+  useEffect(() => {
+    fetchIndexerStatus();
+    const interval = setInterval(fetchIndexerStatus, 15000);
+    return () => clearInterval(interval);
+  }, [fetchIndexerStatus]);
+
   useEffect(() => {
     const params = autoConfigParams["contract-builder"];
+
     if (params) {
-      setContractName(params.name || "");
-      setContractSymbol(params.symbol || "");
+      setContractName(params.name || ""); setContractSymbol(params.symbol || "");
       setTokenSupply(params.totalSupply || "1000000");
-      if (params.royalty) {
-        setContractRoyalty(parseInt(params.royalty) || 5);
-      }
+      if (params.royalty) setContractRoyalty(parseInt(params.royalty) || 5);
       setContractType("ERC-20");
-      addTerminalLog(`AI Assistant pre-configured Contract Builder params: ${params.name} (${params.symbol})`);
+      addTerminalLog(`AI pre-configured Contract Builder: ${params.name} (${params.symbol})`);
     }
   }, [autoConfigParams]);
 
   const compileContract = async () => {
-    if (!contractName || !contractSymbol) {
-      addTerminalLog("Contract compilation error: Name and Symbol are required.");
-      return;
-    }
+    if (!contractName || !contractSymbol) { addTerminalLog("Name and Symbol are required."); return; }
     setIsCompiling(true);
-    addTerminalLog(`Requesting compilation for ${contractType}: ${contractName} (${contractSymbol})...`);
-    
+    addTerminalLog(`Requesting compilation for ${contractType}: ${contractName} (${contractSymbol})…`);
     try {
       const response = await fetch(`${backendUrl}/api/v1/contracts/compile`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: contractType,
-          config: {
-            name: contractName,
-            symbol: contractSymbol,
-            decimals: tokenDecimals,
-            totalSupply: tokenSupply,
-            royaltyPercentage: contractRoyalty,
-            features: ["Mintable", "Burnable"]
-          }
-        })
+          config: { name: contractName, symbol: contractSymbol, decimals: tokenDecimals, totalSupply: tokenSupply, royaltyPercentage: contractRoyalty, features: ["Mintable", "Burnable"] },
+        }),
       });
-
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Compilation failed");
-
       setCompiledResult(data);
-      addTerminalLog("Solidity compilation successful. Generated bytecode & ABI.");
+      addTerminalLog("Solidity compilation successful. Bytecode & ABI generated.");
     } catch (err: any) {
-      console.error(err);
       addTerminalLog(`Compilation error: ${err.message || err}`);
-    } finally {
-      setIsCompiling(false);
-    }
+    } finally { setIsCompiling(false); }
   };
 
   const deployBuilderContract = () => {
-    if (!isConnected) {
-      addTerminalLog("Cannot deploy: Wallet not connected.");
-      return;
-    }
-    addTerminalLog(`Simulating contract deployment on ${chain?.name || "current network"}...`);
-    setTimeout(() => {
-      const mockAddress = "0x" + Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-      const mockTx = "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-      
-      const newContract: DeployedContractRecord = {
-        name: contractName,
-        symbol: contractSymbol,
-        address: mockAddress,
-        type: contractType,
-        chain: chain?.name || "Base Sepolia",
-        txHash: mockTx,
-        timestamp: new Date().toLocaleTimeString()
-      };
+    if (!isConnected) { addTerminalLog("Wallet not connected."); return; }
+    if (!chainGuard.isCorrectChain) { addTerminalLog("Wrong chain — switch to Base Sepolia."); return; }
+    if (!compiledResult?.bytecode) { addTerminalLog("No compiled bytecode — compile first."); return; }
 
-      setDeployedContracts(prev => [newContract, ...prev]);
-      addTerminalLog(`Successfully deployed ${contractType} contract to ${mockAddress}`);
-      addTerminalLog(`Transaction confirmed: ${mockTx}`);
-    }, 2000);
+    addTerminalLog(`Deploying ${contractType} contract on ${chain?.name || "Base Sepolia"}…`);
+    deployWeb3.execute({
+      abi: compiledResult.abi,
+      bytecode: compiledResult.bytecode,
+    });
   };
 
-  // Compile live JSON metadata schema for preview
-  const compileLiveMetadata = () => {
-    return JSON.stringify({
+  const compileLiveMetadata = () =>
+    JSON.stringify({
       name: nftName || "Artwork #001",
       description: nftDescription || "WCOS Asset Description",
       image: imageUrl || "ipfs://QmPlaceholderImageHash",
       external_url: nftExternalUrl || "https://wcos.io",
       seller_fee_basis_points: nftRoyalty * 100,
       fee_recipient: address || "0x0000000000000000000000000000000000000000",
-      attributes: traitsList.map(t => ({
-        trait_type: t.traitType,
-        value: t.value
-      })),
-      properties: {
-        category: nftCategory,
-        unlockable_content: nftUnlockable
-      }
+      attributes: traitsList.map((t) => ({ trait_type: t.traitType, value: t.value })),
+      properties: { category: nftCategory, unlockable_content: nftUnlockable },
     }, null, 2);
-  };
 
-  // Apply AI configured parameters for AI NFT Studio (ERC721)
   useEffect(() => {
     const params = autoConfigParams["ai-studio"];
     if (params) {
-      setPrompt(params.prompt || "");
-      setSelectedStyle(params.style || "cyberpunk");
+      setPrompt(params.prompt || ""); setSelectedStyle(params.style || "cyberpunk");
       setNftName(params.name || "Cyberpunk Wanderers");
-      addTerminalLog(`AI Assistant pre-configured Studio params: prompt: "${params.prompt}"`);
+      addTerminalLog(`AI pre-configured Studio: prompt: "${params.prompt}"`);
     }
   }, [autoConfigParams]);
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ────────────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       
-      {/* Top OS Header Menu */}
+      {/* Top OS Header */}
       <header className="h-16 border-b border-white/10 bg-slate-900/40 backdrop-blur-md px-6 flex items-center justify-between z-10">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-cyan-400 via-indigo-500 to-fuchsia-500 p-[2px] shadow-lg shadow-cyan-500/10">
-            <div className="flex h-full w-full items-center justify-center rounded-[8px] bg-slate-950 text-sm font-black text-cyan-400">
-              W
-            </div>
+            <div className="flex h-full w-full items-center justify-center rounded-[8px] bg-slate-950 text-sm font-black text-cyan-400">W</div>
           </div>
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-semibold uppercase tracking-[0.2em] bg-gradient-to-r from-cyan-400 via-indigo-300 to-fuchsia-400 bg-clip-text text-transparent">
                 Web3 Creator Operating System
               </span>
-              <span className="rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[9px] text-cyan-400 font-mono">
-                v1.0-alpha
-              </span>
+              <span className="rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[9px] text-cyan-400 font-mono">v1.0-alpha</span>
             </div>
             <h1 className="text-sm font-bold text-white tracking-tight">WCOS workspace console</h1>
           </div>
         </div>
 
-        {/* Global Selectors */}
         <div className="flex items-center gap-4">
-          {/* Chain Selector UI */}
+          {/* Indexer Sync Widget */}
+          <div className="hidden md:flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-full px-3 py-1 text-xs">
+            <RefreshCw className={`h-3 w-3 text-cyan-400 ${indexerStatus.isSyncing ? "animate-spin" : ""}`} />
+            <span className="text-[10px] text-slate-400 font-mono">Block:</span>
+            <span className="text-[10px] font-bold text-white font-mono">#{indexerStatus.lastProcessedBlock || "18000000"}</span>
+            <button
+              onClick={triggerManualSync}
+              className="text-[9px] bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 font-bold px-2 py-0.5 rounded-full transition ml-1"
+            >
+              Sync
+            </button>
+          </div>
+
           <div className="flex items-center gap-1 bg-slate-900 border border-white/10 p-1.5 rounded-full text-xs">
             <Globe className="h-3.5 w-3.5 text-indigo-400 ml-1.5" />
             <select
               value={selectedChain}
-              onChange={(e) => {
-                setSelectedChain(e.target.value);
-                addTerminalLog(`Chain switched to: ${e.target.value.toUpperCase()}`);
-              }}
+              onChange={(e) => { setSelectedChain(e.target.value); addTerminalLog(`Chain UI switched to: ${e.target.value.toUpperCase()}`); }}
               className="bg-transparent text-white text-[11px] font-bold outline-none pr-2 cursor-pointer"
             >
               <option value="base-sepolia" className="bg-slate-950">Base Sepolia</option>
@@ -750,11 +897,53 @@ export default function DashboardPage() {
             </select>
           </div>
 
+          {/* SIWE Wallet Authentication Widget */}
+          {isConnected && !siweAuth.isAuthenticated ? (
+            <button
+              onClick={siweAuth.loginWithSiwe}
+              disabled={siweAuth.isSigning}
+              className="rounded-full bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 shadow-md transition disabled:opacity-50"
+            >
+              <Key className="h-3.5 w-3.5" />
+              {siweAuth.isSigning ? "Signing In…" : "SIWE Sign-In"}
+            </button>
+          ) : isConnected && siweAuth.isAuthenticated ? (
+            <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/25 rounded-full px-3 py-1 text-xs">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-emerald-400 font-bold text-[10px]">SIWE:</span>
+              <span className="font-mono text-white text-[10px]">
+                {siweAuth.user?.walletAddress
+                  ? `${siweAuth.user.walletAddress.slice(0, 6)}…${siweAuth.user.walletAddress.slice(-4)}`
+                  : "Authenticated"}
+              </span>
+              <button
+                onClick={siweAuth.logout}
+                className="text-slate-400 hover:text-rose-400 ml-1 text-[10px] font-bold transition"
+                title="Sign Out SIWE Session"
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : null}
+
           <ConnectButton showBalance={false} chainStatus="icon" />
         </div>
       </header>
 
-      {/* Main OS desktop dashboard environment */}
+      {/* SIWE Auth error banner */}
+      {siweAuth.authError && (
+        <div className="bg-rose-500/10 border-b border-rose-500/20 px-6 py-2 flex items-center justify-between text-xs text-rose-400">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            <span>{siweAuth.authError}</span>
+          </div>
+          <button onClick={siweAuth.loginWithSiwe} className="underline font-bold text-rose-300 hover:text-white">
+            Retry SIWE Login
+          </button>
+        </div>
+      )}
+
+      {/* Main workspace */}
       <div className="flex-1 flex overflow-hidden">
         
         {/* Module Sidebar */}
@@ -762,148 +951,88 @@ export default function DashboardPage() {
           <div className="space-y-1">
             <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest px-2 block mb-3">System Modules</span>
             
-            <button
-              onClick={() => setActiveModule("home")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "home"
-                  ? "bg-indigo-600/10 text-indigo-400 border border-indigo-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Cpu className="h-4 w-4" /> Creator Dashboard
-              </span>
+            {[
+              { id: "home", label: "Creator Dashboard", icon: Cpu, color: "indigo" },
+              { id: "collections", label: "My Collections", icon: FileText, color: "emerald" },
+              { id: "ai-studio", label: "AI Creator Studio", icon: Sparkles, color: "cyan" },
+              { id: "marketplace", label: "NFT Marketplace", icon: ShoppingBag, color: "fuchsia" },
+              { id: "contract-builder", label: "Contract Builder", icon: Layers, color: "slate" },
+            ].map(({ id, label, icon: Icon, color }) => (
+              <button
+                key={id}
+                onClick={() => setActiveModule(id)}
+                className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
+                  activeModule === id
+                    ? `bg-${color}-600/10 text-${color}-400 border border-${color}-500/20`
+                    : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
+                }`}
+              >
+                <span className="flex items-center gap-2.5"><Icon className="h-4 w-4" /> {label}</span>
+                <ChevronRight className="h-3 w-3 opacity-60" />
+              </button>
+            ))}
+
+            <button onClick={() => window.location.href = "/defi"} className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all">
+              <span className="flex items-center gap-2.5 text-amber-400"><Coins className="h-4 w-4" /> DeFi Center</span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+            <button onClick={() => window.location.href = "/dao"} className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all">
+              <span className="flex items-center gap-2.5 text-teal-400"><Users className="h-4 w-4" /> DAO Governance</span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+            <button onClick={() => window.location.href = "/analytics"} className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all">
+              <span className="flex items-center gap-2.5 text-indigo-400"><BarChart2 className="h-4 w-4" /> Creator Analytics</span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+            <button onClick={() => window.location.href = `/profile/${address || "0x0000000000000000000000000000000000000000"}`} className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all" id="profile-nav-btn">
+              <span className="flex items-center gap-2.5 text-fuchsia-400"><Users className="h-4 w-4" /> My Profile</span>
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            </button>
+            <button onClick={() => window.location.href = "/settings"} className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all">
+              <span className="flex items-center gap-2.5 text-slate-300"><Settings className="h-4 w-4" /> Settings</span>
               <ChevronRight className="h-3 w-3 opacity-60" />
             </button>
 
-            <button
-              onClick={() => setActiveModule("collections")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "collections"
-                  ? "bg-emerald-600/10 text-emerald-400 border border-emerald-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <FileText className="h-4 w-4" /> My Collections
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => setActiveModule("ai-studio")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "ai-studio"
-                  ? "bg-cyan-600/10 text-cyan-400 border border-cyan-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Sparkles className="h-4 w-4" /> AI Creator Studio
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => setActiveModule("marketplace")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "marketplace"
-                  ? "bg-fuchsia-600/10 text-fuchsia-400 border border-fuchsia-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <ShoppingBag className="h-4 w-4" /> NFT Marketplace
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => setActiveModule("contract-builder")}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "contract-builder"
-                  ? "bg-slate-600/15 text-slate-300 border border-slate-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Layers className="h-4 w-4" /> Contract Builder
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => window.location.href = "/defi"}
-              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
-            >
-              <span className="flex items-center gap-2.5 text-amber-400">
-                <Coins className="h-4 w-4" /> DeFi Center
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => window.location.href = "/dao"}
-              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
-            >
-              <span className="flex items-center gap-2.5 text-teal-400">
-                <Users className="h-4 w-4" /> DAO Governance
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => window.location.href = "/analytics"}
-              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
-            >
-              <span className="flex items-center gap-2.5 text-indigo-400">
-                <BarChart2 className="h-4 w-4" /> Creator Analytics
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => window.location.href = `/profile/${address || "0x0000000000000000000000000000000000000000"}`}
-              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
-              id="profile-nav-btn"
-            >
-              <span className="flex items-center gap-2.5 text-fuchsia-400">
-                <Users className="h-4 w-4" /> My Profile
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
-
-            <button
-              onClick={() => window.location.href = "/settings"}
-              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent transition-all"
-            >
-              <span className="flex items-center gap-2.5 text-slate-300">
-                <Settings className="h-4 w-4" /> Settings
-              </span>
-              <ChevronRight className="h-3 w-3 opacity-60" />
-            </button>
+            <div className="pt-3">
+              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest px-2 block mb-2">Knowledge & Guidance</span>
+              <button onClick={() => window.location.href = "/learn"} className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-transparent transition-all">
+                <span className="flex items-center gap-2 text-cyan-400"><span>📚</span> Learn Concepts</span>
+                <ChevronRight className="h-3 w-3 opacity-60" />
+              </button>
+              <button onClick={() => window.location.href = "/manual"} className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 border border-transparent transition-all">
+                <span className="flex items-center gap-2 text-indigo-400"><span>📖</span> User Manual</span>
+                <ChevronRight className="h-3 w-3 opacity-60" />
+              </button>
+              <button onClick={() => window.location.href = "/news"} className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-transparent transition-all">
+                <span className="flex items-center gap-2 text-cyan-400"><span>📰</span> Daily News</span>
+                <ChevronRight className="h-3 w-3 opacity-60" />
+              </button>
+              <button onClick={() => window.location.href = "/magazine"} className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs font-semibold text-slate-400 hover:text-fuchsia-300 hover:bg-fuchsia-500/10 border border-transparent transition-all">
+                <span className="flex items-center gap-2 text-fuchsia-400"><span>🎨</span> Magazine</span>
+                <ChevronRight className="h-3 w-3 opacity-60" />
+              </button>
+            </div>
           </div>
 
-          {/* Connected session indicator */}
           <div className="rounded-2xl border border-white/5 bg-slate-900/20 p-3 space-y-2">
             <div className="flex items-center gap-1.5 text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-              <Wallet className="h-3 w-3" /> Selected Network
+              <Wallet className="h-3 w-3" /> Network
             </div>
-            <p className="text-[10px] font-mono text-indigo-300 truncate uppercase">
-              {selectedChain}
-            </p>
-            <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-              <div className="h-full bg-cyan-400 rounded-full w-full" />
-            </div>
+            <p className="text-[10px] font-mono text-indigo-300 truncate uppercase">{chain?.name || selectedChain}</p>
+            {!chainGuard.isCorrectChain && isConnected && (
+              <button onClick={chainGuard.switchToRequired} className="w-full text-[9px] text-rose-400 border border-rose-500/20 rounded-lg py-1 hover:bg-rose-500/5 transition">
+                Switch to Base Sepolia
+              </button>
+            )}
           </div>
         </aside>
 
-        {/* Central Workspace Window */}
+        {/* Central Workspace */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
-          
-          {/* Module 1: Creator Dashboard Panel */}
+
+          {/* ── Module: Creator Dashboard ─────────────────────────────────── */}
           {activeModule === "home" && (
-            <div className="space-y-6 animate-fade-in">
+            <div className="space-y-6">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-bold tracking-tight text-white">Creator Dashboard</h2>
@@ -911,14 +1040,13 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex items-center gap-2 bg-slate-900/60 border border-white/5 rounded-full px-3 py-1 text-xs font-mono text-slate-400">
                   <Activity className="h-3.5 w-3.5 text-cyan-400" />
-                  <span>Chain: {selectedChain.toUpperCase()}</span>
+                  <span>Chain: {(chain?.name || selectedChain).toUpperCase()}</span>
                 </div>
               </div>
 
-              {/* Creator Gallery Grid */}
+              {/* Asset Creator Gallery */}
               <div className="space-y-4">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Asset Creator Gallery</h3>
-                
                 {draftAssets.length === 0 ? (
                   <div className="flex flex-col items-center justify-center p-12 border border-dashed border-white/10 rounded-3xl text-slate-500">
                     <ImageIcon className="h-12 w-12 mb-3 text-slate-600" />
@@ -930,20 +1058,15 @@ export default function DashboardPage() {
                     {draftAssets.map((asset) => (
                       <div key={asset.id} className="rounded-2xl border border-white/5 bg-slate-900/30 overflow-hidden flex flex-col justify-between shadow-lg">
                         <div>
-                          {/* Visual element */}
                           <div className="relative aspect-square bg-slate-950">
                             <img src={asset.imageUrl} alt={asset.name} className="h-full w-full object-cover" />
                             <span className={`absolute top-3 right-3 rounded-full border px-2.5 py-0.5 text-[9px] font-bold ${
-                              asset.status === 'MINTED' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                              asset.status === 'LISTED' ? 'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20' :
-                              asset.status === 'MINTING' ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' :
-                              'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                            }`}>
-                              {asset.status}
-                            </span>
+                              asset.status === "MINTED" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                              asset.status === "LISTED" ? "bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20" :
+                              asset.status === "MINTING" ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20" :
+                              "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            }`}>{asset.status}</span>
                           </div>
-
-                          {/* Info panel */}
                           <div className="p-4 space-y-2">
                             <div className="flex items-center justify-between">
                               <h4 className="text-sm font-bold text-white truncate max-w-[150px]">{asset.name}</h4>
@@ -952,19 +1075,28 @@ export default function DashboardPage() {
                             <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{asset.description}</p>
                           </div>
                         </div>
-
-                        {/* Actions */}
                         <div className="p-4 border-t border-white/5 bg-slate-900/10 flex flex-col gap-2">
                           {asset.status === "DRAFT" ? (
-                            <button
-                              onClick={() => handleMintDraft(asset)}
-                              className="w-full rounded-full bg-indigo-600 hover:bg-indigo-500 py-2 text-xs font-semibold text-white transition-all duration-200"
-                            >
-                              Mint NFT
-                            </button>
+                            <>
+                              <ChainGuardBanner {...chainGuard} />
+                              {chainGuard.isConnected && chainGuard.isCorrectChain && (
+                                <button
+                                  onClick={() => handleMintDraft(asset)}
+                                  disabled={mintTx.state.isLoading && selectedDraftId === asset.id}
+                                  className="w-full rounded-full bg-indigo-600 hover:bg-indigo-500 py-2 text-xs font-semibold text-white transition-all duration-200 disabled:opacity-50"
+                                >
+                                  {mintTx.state.isLoading && selectedDraftId === asset.id
+                                    ? getTxStatusLabel(mintTx.state.status, { pending_wallet: "Check wallet…", submitted: "Confirming…" })
+                                    : "Mint NFT"}
+                                </button>
+                              )}
+                              {mintTx.state.status !== "idle" && selectedDraftId === asset.id && (
+                                <TxLifecycleBanner status={mintTx.state.status} txHash={mintTx.state.txHash} error={mintTx.state.error} />
+                              )}
+                            </>
                           ) : asset.status === "MINTING" ? (
                             <div className="w-full flex items-center justify-center gap-1.5 text-xs text-cyan-400 py-2 font-semibold">
-                              <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Publishing on-chain...
+                              <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Publishing on-chain…
                             </div>
                           ) : asset.status === "MINTED" ? (
                             <button
@@ -985,9 +1117,8 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              {/* Bottom Row grid */}
+              {/* Bottom row */}
               <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-                {/* Deployed Contract Records */}
                 <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6">
                   <h3 className="text-sm font-bold text-white mb-4">Deployed Contracts Registry</h3>
                   {deployedContracts.length === 0 ? (
@@ -1002,15 +1133,13 @@ export default function DashboardPage() {
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-white">{c.name}</span>
-                              <span className="rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-[9px] text-indigo-400">
-                                {c.type}
-                              </span>
+                              <span className="rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-[9px] text-indigo-400">{c.type}</span>
                             </div>
                             <p className="text-[10px] text-slate-400 mt-1 font-mono">{c.address}</p>
                           </div>
                           <div className="text-right">
                             <span className="text-[10px] text-slate-500">{c.timestamp}</span>
-                            <span className="text-[10px] text-cyan-400 block mt-0.5 hover:underline cursor-pointer">Verify</span>
+                            <a href={`https://sepolia.basescan.org/address/${c.address}`} target="_blank" rel="noreferrer" className="text-[10px] text-cyan-400 block mt-0.5 hover:underline">Verify</a>
                           </div>
                         </div>
                       ))}
@@ -1018,7 +1147,6 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* Shell monitor logs */}
                 <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
                   <div>
                     <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4">
@@ -1035,271 +1163,180 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Module: Collections Manager */}
+          {/* ── Module: Collections Manager ───────────────────────────────── */}
           {activeModule === "collections" && (
-            <div className="space-y-6 animate-fade-in">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                  <FileText className="h-6 w-6 text-emerald-400" /> Collection Creator
+                </h2>
+                <p className="text-slate-400 text-xs mt-1">Configure and save NFT collection metadata to the backend. On-chain factory deployment coming soon.</p>
+              </div>
+
+              {/* DEV_MODE notice — factory contract not yet deployed */}
+              <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4 flex items-start gap-3 text-xs text-amber-400">
+                <Info className="h-4 w-4 flex-shrink-0 mt-0.5" />
                 <div>
-                  <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                    <FileText className="h-6 w-6 text-emerald-400" /> Collection Creator
-                  </h2>
-                  <p className="text-slate-400 text-xs mt-1">Configure parameters and deploy custom collection smart contracts.</p>
+                  <p className="font-bold">Collection Factory — Coming Soon</p>
+                  <p className="text-amber-400/80 mt-0.5">
+                    On-chain collection contract deployment via factory is not yet available on Base Sepolia. 
+                    Save collections as drafts now — deploy buttons will activate once the WCOS Factory contract is deployed.
+                    Set <code className="bg-amber-500/10 px-1 rounded">NEXT_PUBLIC_WCOS_FACTORY_ADDRESS</code> to enable.
+                  </p>
                 </div>
               </div>
 
               <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
-                {/* Visual form collection builder */}
                 <div className="space-y-5 rounded-3xl border border-white/5 bg-slate-900/20 p-6">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider">Configure Collection Details</h3>
-                  
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-slate-500 font-bold uppercase block">Collection Name</label>
-                      <input
-                        type="text"
-                        value={colName}
-                        onChange={(e) => setColName(e.target.value)}
+                      <input type="text" value={colName} onChange={(e) => setColName(e.target.value)}
                         className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                        placeholder="e.g. Cyberpunk Wanderers"
-                      />
+                        placeholder="e.g. Cyberpunk Wanderers" />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-slate-500 font-bold uppercase block">Symbol</label>
-                      <input
-                        type="text"
-                        value={colSymbol}
-                        onChange={(e) => setColSymbol(e.target.value)}
+                      <input type="text" value={colSymbol} onChange={(e) => setColSymbol(e.target.value)}
                         className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                        placeholder="e.g. CPW"
-                      />
+                        placeholder="e.g. CPW" />
                     </div>
                   </div>
-
                   <div className="space-y-1.5">
                     <label className="text-[10px] text-slate-500 font-bold uppercase block">Description</label>
-                    <textarea
-                      rows={2}
-                      value={colDesc}
-                      onChange={(e) => setColDesc(e.target.value)}
+                    <textarea rows={2} value={colDesc} onChange={(e) => setColDesc(e.target.value)}
                       className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                      placeholder="About this collection..."
-                    />
+                      placeholder="About this collection…" />
                   </div>
-
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-slate-500 font-bold uppercase block">Logo Image URL</label>
-                      <input
-                        type="text"
-                        value={colLogo}
-                        onChange={(e) => setColLogo(e.target.value)}
+                      <input type="text" value={colLogo} onChange={(e) => setColLogo(e.target.value)}
                         className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                        placeholder="https://image.png"
-                      />
+                        placeholder="https://image.png" />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-slate-500 font-bold uppercase block">Banner Image URL</label>
-                      <input
-                        type="text"
-                        value={colBanner}
-                        onChange={(e) => setColBanner(e.target.value)}
+                      <input type="text" value={colBanner} onChange={(e) => setColBanner(e.target.value)}
                         className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                        placeholder="https://banner.png"
-                      />
+                        placeholder="https://banner.png" />
                     </div>
                   </div>
-
                   <div className="grid gap-4 sm:grid-cols-3">
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-slate-500 font-bold uppercase block">Max Supply</label>
-                      <input
-                        type="number"
-                        value={colMaxSupply}
-                        onChange={(e) => setColMaxSupply(parseInt(e.target.value) || 0)}
-                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                      />
+                      <input type="number" value={colMaxSupply} onChange={(e) => setColMaxSupply(parseInt(e.target.value) || 0)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400" />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Royalty Percentage (%)</label>
-                      <input
-                        type="number"
-                        value={colRoyalty}
-                        onChange={(e) => setColRoyalty(parseInt(e.target.value) || 0)}
-                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                      />
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Royalty %</label>
+                      <input type="number" value={colRoyalty} onChange={(e) => setColRoyalty(parseInt(e.target.value) || 0)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400" />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-slate-500 font-bold uppercase block">Token Standard</label>
-                      <select
-                        value={colContractType}
-                        onChange={(e) => setColContractType(e.target.value as any)}
-                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                      >
-                        <option value="ERC-721">ERC-721 Collection</option>
-                        <option value="ERC-1155">ERC-1155 Multi-token</option>
+                      <select value={colContractType} onChange={(e) => setColContractType(e.target.value as any)}
+                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400">
+                        <option value="ERC-721">ERC-721</option>
+                        <option value="ERC-1155">ERC-1155</option>
                       </select>
                     </div>
                   </div>
-
                   <div className="space-y-1.5">
                     <label className="text-[10px] text-slate-500 font-bold uppercase block">Royalty Receiver Address</label>
-                    <input
-                      type="text"
-                      value={colRoyaltyReceiver}
-                      onChange={(e) => setColRoyaltyReceiver(e.target.value)}
+                    <input type="text" value={colRoyaltyReceiver} onChange={(e) => setColRoyaltyReceiver(e.target.value)}
                       className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-emerald-400"
-                      placeholder="0x..."
-                    />
+                      placeholder="0x…" />
                   </div>
-
                   <div className="flex gap-3 pt-4 border-t border-white/5">
-                    <button
-                      onClick={saveCollectionDraft}
-                      className="flex-1 rounded-full border border-white/10 bg-slate-950 py-3.5 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition"
-                    >
+                    <button onClick={saveCollectionDraft}
+                      className="flex-1 rounded-full border border-white/10 bg-slate-950 py-3.5 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition">
                       Save as Draft
                     </button>
                   </div>
                 </div>
 
-                {/* List Collections Panel */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white mb-4">My Collection Repositories</h3>
-                    {collections.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl text-slate-500 text-center">
-                        <FileText className="h-8 w-8 mb-2" />
-                        <p className="text-xs">No active collections found.</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3.5">
-                        {collections.map((col) => (
-                          <div key={col.id} className="p-4 bg-slate-950/65 rounded-2xl border border-white/5 flex items-start gap-3.5">
-                            <img src={col.logoUrl} alt={col.name} className="h-12 w-12 rounded-xl object-cover" />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-white truncate">{col.name}</span>
-                                <span className="rounded bg-white/5 px-2 py-0.5 text-[8px] text-slate-400 font-mono">{col.symbol}</span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{col.description}</p>
-                              
-                              {col.status === "DEPLOYED" ? (
-                                <p className="text-[9px] font-mono text-emerald-400 mt-2 truncate bg-emerald-500/5 px-2.5 py-1 border border-emerald-500/20 rounded-lg">
-                                  Deployed: {col.contractAddress}
-                                </p>
-                              ) : (
-                                <div className="mt-3 flex items-center justify-between">
-                                  <span className="rounded-full bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 text-[8px] text-amber-400 font-bold uppercase">
-                                    DRAFT
-                                  </span>
-                                  <button
-                                    onClick={() => deployCollectionContract(col)}
-                                    disabled={isDeployingCollection}
-                                    className="rounded-full bg-emerald-600 hover:bg-emerald-500 px-3.5 py-1 text-[10px] font-bold text-white transition disabled:opacity-50"
-                                  >
-                                    Deploy Contract
-                                  </button>
-                                </div>
-                              )}
+                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6">
+                  <h3 className="text-sm font-bold text-white mb-4">My Collection Repositories</h3>
+                  {collections.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl text-slate-500 text-center">
+                      <FileText className="h-8 w-8 mb-2" />
+                      <p className="text-xs">No active collections found.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3.5">
+                      {collections.map((col) => (
+                        <div key={col.id} className="p-4 bg-slate-950/65 rounded-2xl border border-white/5 flex items-start gap-3.5">
+                          <img src={col.logoUrl} alt={col.name} className="h-12 w-12 rounded-xl object-cover" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-white truncate text-xs">{col.name}</span>
+                              <span className="rounded bg-white/5 px-2 py-0.5 text-[8px] text-slate-400 font-mono">{col.symbol}</span>
                             </div>
+                            <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{col.description}</p>
+                            {col.status === "DEPLOYED" ? (
+                              <p className="text-[9px] font-mono text-emerald-400 mt-2 truncate bg-emerald-500/5 px-2.5 py-1 border border-emerald-500/20 rounded-lg">
+                                Deployed: {col.contractAddress}
+                              </p>
+                            ) : (
+                              <div className="mt-2 flex items-center gap-2">
+                                <span className="rounded-full bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 text-[8px] text-amber-400 font-bold uppercase">DRAFT</span>
+                                <span className="text-[9px] text-slate-500">Factory deploy coming soon</span>
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           )}
 
-          {/* Module 2: AI Creator Studio */}
+          {/* ── Module: AI Creator Studio & IPFS Minting ─────────────────────── */}
           {activeModule === "ai-studio" && (
-            <div className="space-y-6 animate-fade-in">
+            <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                    <Sparkles className="h-6 w-6 text-cyan-400" /> AI Creator Studio
+                    <Sparkles className="h-6 w-6 text-cyan-400" /> AI & IPFS Creator Studio
                   </h2>
-                  <p className="text-slate-400 text-xs mt-1">Configure prompt parameters, metadata tags, and storage destinations.</p>
+                  <p className="text-slate-400 text-xs mt-1">Generate AI artwork or upload image files, pin standard NFT metadata to IPFS via Pinata, and mint on-chain.</p>
                 </div>
-                
-                {/* Storage Toggle */}
                 <div className="flex items-center gap-2 bg-slate-900 border border-white/10 p-1.5 rounded-full">
-                  <button
-                    onClick={() => setStorageDriver('s3')}
-                    className={`flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold uppercase transition ${
-                      storageDriver === 's3' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Database className="h-3 w-3" /> AWS S3
+                  <button onClick={() => setCreationMode("ai")} className={`flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold uppercase transition ${creationMode === "ai" ? "bg-cyan-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
+                    <Sparkles className="h-3 w-3" /> AI Art Generator
                   </button>
-                  <button
-                    onClick={() => setStorageDriver('ipfs')}
-                    className={`flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold uppercase transition ${
-                      storageDriver === 'ipfs' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Compass className="h-3 w-3" /> IPFS
+                  <button onClick={() => setCreationMode("upload")} className={`flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold uppercase transition ${creationMode === "upload" ? "bg-cyan-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
+                    <ImageIcon className="h-3 w-3" /> Upload Image File
                   </button>
                 </div>
               </div>
 
-              {/* Sub tabs for multi-modal generation */}
-              <div className="flex border-b border-white/10 gap-4">
-                <button
-                  onClick={() => setAiStudioSubTab('image')}
-                  className={`flex items-center gap-1.5 pb-2.5 text-xs font-bold transition border-b-2 uppercase ${
-                    aiStudioSubTab === 'image' ? 'border-cyan-500 text-cyan-400' : 'border-transparent text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <ImageIcon className="h-3.5 w-3.5" /> Image Studio
-                </button>
-                <button
-                  onClick={() => setAiStudioSubTab('video')}
-                  className={`flex items-center gap-1.5 pb-2.5 text-xs font-bold transition border-b-2 uppercase ${
-                    aiStudioSubTab === 'video' ? 'border-cyan-500 text-cyan-400' : 'border-transparent text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Video className="h-3.5 w-3.5" /> Video Studio
-                </button>
-                <button
-                  onClick={() => setAiStudioSubTab('audio')}
-                  className={`flex items-center gap-1.5 pb-2.5 text-xs font-bold transition border-b-2 uppercase ${
-                    aiStudioSubTab === 'audio' ? 'border-cyan-500 text-cyan-400' : 'border-transparent text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Music className="h-3.5 w-3.5" /> Music Studio
-                </button>
-                <button
-                  onClick={() => setAiStudioSubTab('3d')}
-                  className={`flex items-center gap-1.5 pb-2.5 text-xs font-bold transition border-b-2 uppercase ${
-                    aiStudioSubTab === '3d' ? 'border-cyan-500 text-cyan-400' : 'border-transparent text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Box className="h-3.5 w-3.5" /> 3D mesh
-                </button>
-              </div>
+              {/* Validation alert banner */}
+              {validationError && (
+                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 flex items-center justify-between text-xs text-rose-300">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0 text-rose-400" />
+                    <span>{validationError}</span>
+                  </div>
+                  <button onClick={() => setValidationError(null)} className="text-slate-400 hover:text-white">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
 
               <div className="grid gap-6 lg:grid-cols-[1.3fr_1.1fr]">
-                {/* Visual Metadata Form */}
                 <div className="space-y-5 rounded-3xl border border-white/5 bg-slate-900/20 p-6">
-                  
-                  {/* NFT Details Card */}
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold text-white uppercase tracking-wider">1. Configure Collection Metadata</h3>
-                      
-                      {/* Select existing collection */}
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider">1. Configure Metadata</h3>
                       <div className="flex items-center gap-1.5 bg-slate-950 border border-white/10 p-1.5 rounded-xl text-xs">
-                        <span className="text-[9px] text-slate-500 font-bold uppercase ml-1">Target:</span>
-                        <select
-                          value={selectedCollection}
-                          onChange={(e) => {
-                            setSelectedCollection(e.target.value);
-                            addTerminalLog(`Selected Target Collection: ${e.target.value}`);
-                          }}
-                          className="bg-transparent text-white text-[10px] font-bold outline-none pr-1 cursor-pointer"
-                        >
+                        <span className="text-[9px] text-slate-500 font-bold uppercase ml-1">Target Contract:</span>
+                        <select value={selectedCollection} onChange={(e) => setSelectedCollection(e.target.value)}
+                          className="bg-transparent text-white text-[10px] font-bold outline-none pr-1 cursor-pointer">
                           {collections.map((col) => (
                             <option key={col.id} value={col.contractAddress || col.id} className="bg-slate-950">
                               {col.name} ({col.status})
@@ -1308,25 +1345,18 @@ export default function DashboardPage() {
                         </select>
                       </div>
                     </div>
-                    
+
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Asset Name</label>
-                        <input
-                          type="text"
-                          value={nftName}
-                          onChange={(e) => setNftName(e.target.value)}
+                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Asset Name *</label>
+                        <input type="text" value={nftName} onChange={(e) => setNftName(e.target.value)}
                           className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                          placeholder="e.g. Cyberpunk Warrior #001"
-                        />
+                          placeholder="e.g. Cyberpunk Warrior #001" />
                       </div>
                       <div className="space-y-1.5">
                         <label className="text-[10px] text-slate-500 font-bold uppercase block">Category</label>
-                        <select
-                          value={nftCategory}
-                          onChange={(e) => setNftCategory(e.target.value)}
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                        >
+                        <select value={nftCategory} onChange={(e) => setNftCategory(e.target.value)}
+                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400">
                           <option value="art">Digital Artwork</option>
                           <option value="gaming">Gaming Collectibles</option>
                           <option value="music">Audio Tracks</option>
@@ -1336,101 +1366,54 @@ export default function DashboardPage() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Description</label>
-                      <textarea
-                        rows={2}
-                        value={nftDescription}
-                        onChange={(e) => setNftDescription(e.target.value)}
+                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Description *</label>
+                      <textarea rows={2} value={nftDescription} onChange={(e) => setNftDescription(e.target.value)}
                         className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                        placeholder="Provide details about the utility or artwork..."
-                      />
+                        placeholder="Provide details about the artwork or token utility…" />
                     </div>
 
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Royalty Percentage (%)</label>
+                        <label className="text-[10px] text-slate-500 font-bold uppercase block">Royalty %</label>
                         <div className="relative">
-                          <input
-                            type="number"
-                            value={nftRoyalty}
-                            onChange={(e) => setNftRoyalty(parseFloat(e.target.value) || 0)}
-                            className="w-full rounded-xl border border-white/10 bg-slate-950 pl-3.5 pr-8 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                          />
+                          <input type="number" value={nftRoyalty} onChange={(e) => setNftRoyalty(parseFloat(e.target.value) || 0)}
+                            className="w-full rounded-xl border border-white/10 bg-slate-950 pl-3.5 pr-8 py-2.5 text-xs text-white outline-none focus:border-cyan-400" />
                           <Percent className="absolute right-3 top-3 h-4 w-4 text-slate-500" />
                         </div>
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase block">External URL Link</label>
-                        <input
-                          type="text"
-                          value={nftExternalUrl}
-                          onChange={(e) => setNftExternalUrl(e.target.value)}
+                        <label className="text-[10px] text-slate-500 font-bold uppercase block">External URL</label>
+                        <input type="text" value={nftExternalUrl} onChange={(e) => setNftExternalUrl(e.target.value)}
                           className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                          placeholder="https://myproject.io"
-                        />
+                          placeholder="https://myproject.io" />
                       </div>
                     </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase block">Unlockable Content Details</label>
-                      <textarea
-                        rows={2}
-                        value={nftUnlockable}
-                        onChange={(e) => setNftUnlockable(e.target.value)}
-                        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-cyan-400"
-                        placeholder="Add private downloads link or key code (Visible only to the NFT owner)..."
-                      />
-                    </div>
-
-                    {/* Traits Manager Section */}
+                    {/* Traits Manager */}
                     <div className="space-y-4 pt-4 border-t border-white/5">
                       <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Attributes Traits Manager</span>
-                      
-                      {/* Add Trait Form */}
                       <div className="grid gap-3 sm:grid-cols-3 items-end">
                         <div className="space-y-1.5">
                           <label className="text-[9px] text-slate-400 uppercase">Trait Type</label>
-                          <input
-                            type="text"
-                            value={newTraitType}
-                            onChange={(e) => setNewTraitType(e.target.value)}
-                            placeholder="e.g. Helmet"
-                            className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-cyan-400"
-                          />
+                          <input type="text" value={newTraitType} onChange={(e) => setNewTraitType(e.target.value)} placeholder="e.g. Background"
+                            className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-cyan-400" />
                         </div>
                         <div className="space-y-1.5">
                           <label className="text-[9px] text-slate-400 uppercase">Value</label>
-                          <input
-                            type="text"
-                            value={newTraitValue}
-                            onChange={(e) => setNewTraitValue(e.target.value)}
-                            placeholder="e.g. Obsidian Visor"
-                            className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-cyan-400"
-                          />
+                          <input type="text" value={newTraitValue} onChange={(e) => setNewTraitValue(e.target.value)} placeholder="e.g. Obsidian Matrix"
+                            className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-cyan-400" />
                         </div>
-                        <button
-                          type="button"
-                          onClick={addCustomTrait}
-                          className="rounded-xl bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 px-4 py-2 text-xs font-bold hover:bg-cyan-500/10 transition flex items-center justify-center gap-1.5 h-9.5"
-                        >
+                        <button type="button" onClick={addCustomTrait}
+                          className="rounded-xl bg-cyan-600/10 border border-cyan-500/20 text-cyan-400 px-4 py-2 text-xs font-bold hover:bg-cyan-500/10 transition flex items-center justify-center gap-1.5">
                           <Plus className="h-4 w-4" /> Add Trait
                         </button>
                       </div>
-
-                      {/* Traits List */}
                       <div className="flex flex-wrap gap-2 pt-1">
                         {traitsList.map((t, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center gap-2 rounded-xl bg-slate-950/60 border border-white/10 px-3 py-1.5 text-xs"
-                          >
+                          <div key={idx} className="flex items-center gap-2 rounded-xl bg-slate-950/60 border border-white/10 px-3 py-1.5 text-xs">
                             <span className="text-[9px] text-slate-500 font-semibold">{t.traitType}:</span>
                             <span className="font-bold text-white">{t.value}</span>
-                            <button
-                              type="button"
-                              onClick={() => removeCustomTrait(idx)}
-                              className="text-slate-400 hover:text-rose-400 transition"
-                            >
+                            <button type="button" onClick={() => removeCustomTrait(idx)} className="text-slate-400 hover:text-rose-400 transition">
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </div>
@@ -1439,101 +1422,156 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Seed prompt input */}
-                  <div className="space-y-2 pt-4 border-t border-white/5">
-                    <label htmlFor="aiPrompt" className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">2. Seed Text prompt</label>
-                    <textarea
-                      id="aiPrompt"
-                      rows={4}
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3.5 text-xs text-slate-100 placeholder-slate-500 outline-none transition focus:border-cyan-400 focus:bg-slate-950"
-                      placeholder={`Describe the seed prompt for your ${aiStudioSubTab}...`}
-                    />
-                  </div>
-
-                  {/* Render conditional inputs depending on active generator subtab */}
-                  {aiStudioSubTab === 'image' && (
-                    <div className="space-y-2">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">Style Preset</label>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {["cyberpunk", "cinematic", "anime", "retro", "abstract"].map((style) => (
-                          <button
-                            key={style}
-                            onClick={() => setSelectedStyle(style)}
-                            className={`rounded-xl border py-2 px-3 text-xs font-semibold capitalize transition ${
-                              selectedStyle === style
-                                ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
-                                : "border-white/5 bg-slate-950 text-slate-400 hover:border-white/10"
-                            }`}
-                          >
-                            {style}
-                          </button>
-                        ))}
+                  {/* Mode 1: Custom File Upload */}
+                  {creationMode === "upload" ? (
+                    <div className="space-y-3 pt-4 border-t border-white/5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">2. Select NFT Image File</label>
+                      <div className="border-2 border-dashed border-white/10 hover:border-cyan-500/50 rounded-2xl p-6 flex flex-col items-center justify-center bg-slate-950/50 transition text-center">
+                        <ImageIcon className="h-8 w-8 text-cyan-400 mb-2" />
+                        <p className="text-xs text-slate-300 font-semibold">Drag & drop or browse image file</p>
+                        <p className="text-[10px] text-slate-500 mt-1">PNG, JPG, GIF, WEBP, SVG up to 10MB</p>
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/svg+xml"
+                          onChange={handleFileChange}
+                          className="mt-3 text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-cyan-500/10 file:text-cyan-400 hover:file:bg-cyan-500/20 cursor-pointer"
+                        />
+                        {selectedFile && (
+                          <div className="mt-3 text-xs text-emerald-400 font-mono font-bold">
+                            ✓ Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+                          </div>
+                        )}
                       </div>
+                    </div>
+                  ) : (
+                    /* Mode 2: AI Prompt Input */
+                    <div className="space-y-4 pt-4 border-t border-white/5">
+                      <div className="space-y-2">
+                        <label htmlFor="aiPrompt" className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">2. AI Art Text Prompt</label>
+                        <textarea id="aiPrompt" rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)}
+                          className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-xs text-slate-100 placeholder-slate-500 outline-none transition focus:border-cyan-400"
+                          placeholder="Describe your prompt, e.g. A cybernetic owl sitting on a neon skyscraper..." />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">Style Preset</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {["cyberpunk", "cinematic", "anime", "retro", "abstract"].map((style) => (
+                            <button key={style} onClick={() => setSelectedStyle(style)}
+                              className={`rounded-xl border py-2 px-3 text-xs font-semibold capitalize transition ${
+                                selectedStyle === style ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300" : "border-white/5 bg-slate-950 text-slate-400 hover:border-white/10"
+                              }`}>
+                              {style}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button onClick={generateArt} disabled={isGenerating}
+                        className="w-full inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 px-6 py-3 text-xs font-semibold text-white shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-50">
+                        {isGenerating ? "Synthesizing AI Artwork..." : "Generate AI Artwork"}
+                      </button>
                     </div>
                   )}
 
-                  {/* Generate Button & Status info */}
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-white/5">
+                  {/* Actions & IPFS Upload Trigger */}
+                  <div className="space-y-3 pt-4 border-t border-white/5">
                     <button
-                      onClick={generateArt}
-                      disabled={isGenerating}
-                      className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-cyan-500 to-indigo-600 px-8 py-3.5 text-xs font-semibold text-white shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-50"
+                      onClick={uploadAndPrepareIpfsMetadata}
+                      disabled={ipfsUploadStep === "uploading_image" || ipfsUploadStep === "uploading_metadata"}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-600 px-6 py-3.5 text-xs font-bold text-white shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-50"
                     >
-                      {isGenerating ? `Synthesizing ${aiStudioSubTab}...` : `Generate ${aiStudioSubTab}`}
+                      {ipfsUploadStep === "uploading_image" ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" /> Step 1/2: Pinning Image to IPFS...
+                        </>
+                      ) : ipfsUploadStep === "uploading_metadata" ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" /> Step 2/2: Pinning Metadata JSON to IPFS...
+                        </>
+                      ) : (
+                        <>
+                          <Compass className="h-4 w-4" /> Upload Image & Metadata to IPFS (Pinata)
+                        </>
+                      )}
                     </button>
-                    <div className="flex-1 rounded-2xl bg-slate-950/80 px-4 py-3 text-[10px] text-slate-400 border border-white/5">
-                      <span className="font-bold text-cyan-400">Status:</span> {aiStatus}
+
+                    <div className="rounded-xl bg-slate-950/80 px-4 py-2.5 text-[10px] text-slate-400 border border-white/5 flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-cyan-400">Status:</span> {aiStatus}
+                      </div>
+                      {uploadedIpfsMetadataGateway && (
+                        <a
+                          href={uploadedIpfsMetadataGateway}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-emerald-400 underline font-mono font-bold hover:text-emerald-300"
+                        >
+                          IPFS Preview
+                        </a>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {/* Live Schema & Preview Panel */}
+                {/* Right Column: Previews & Mint Action */}
                 <div className="space-y-6 flex flex-col justify-between">
-                  
-                  {/* Canvas box */}
-                  <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6">
-                    <h3 className="text-sm font-bold text-white mb-4">Canvas Preview</h3>
+                  <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-white">Image Preview</h3>
+                      {uploadedIpfsImageGateway && (
+                        <a
+                          href={uploadedIpfsImageGateway}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] text-cyan-400 underline font-mono flex items-center gap-1"
+                        >
+                          <Globe className="h-3 w-3" /> Pinata Gateway Link
+                        </a>
+                      )}
+                    </div>
                     <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950 aspect-square flex items-center justify-center shadow-inner">
-                      {imageUrl ? (
-                        <img src={imageUrl} alt="Generated AI Asset" className="h-full w-full object-cover rounded-2xl" />
+                      {imageUrl || imagePreviewUrl ? (
+                        <img src={imageUrl || imagePreviewUrl} alt="NFT Preview" className="h-full w-full object-cover rounded-2xl" />
                       ) : (
                         <div className="flex flex-col items-center justify-center text-center p-6 text-slate-500">
-                          <Cpu className="h-10 w-10 mb-2 animate-pulse text-slate-600" />
-                          <p className="text-xs font-semibold text-slate-300">Awaiting AI Studio parameters</p>
-                          <p className="text-[10px] mt-1 max-w-[200px]">Fill the prompts and style fields then tap generate to visualize the asset here.</p>
+                          <ImageIcon className="h-10 w-10 mb-2 animate-pulse text-slate-600" />
+                          <p className="text-xs font-semibold text-slate-300">No Image Uploaded Yet</p>
+                          <p className="text-[10px] mt-1 max-w-[200px]">Select a local file or click Generate AI Artwork to view preview.</p>
                         </div>
                       )}
-                      
-                      {imageUrl && (
-                        <span className="absolute top-3 right-3 inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-2.5 py-1 text-[9px] font-bold text-cyan-400 border border-cyan-500/20 backdrop-blur-md">
-                          Generated ({storageDriver.toUpperCase()})
+                      {uploadedIpfsImageUri && (
+                        <span className="absolute top-3 right-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[9px] font-bold text-emerald-400 border border-emerald-500/20 backdrop-blur-md">
+                          Pinned on IPFS
                         </span>
                       )}
                     </div>
                   </div>
 
-                  {/* Schema Preview */}
-                  <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold text-white flex items-center gap-1.5 mb-4">
-                        <Eye className="h-4 w-4 text-cyan-400" /> Live Metadata JSON (ERC-721 Schema)
+                  <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                        <Eye className="h-4 w-4 text-cyan-400" /> Live Standard Metadata JSON
                       </h3>
-                      <div className="rounded-2xl bg-slate-950 p-4 font-mono text-[9px] text-cyan-300 h-64 overflow-y-auto border border-white/5 whitespace-pre leading-relaxed select-all">
-                        {compileLiveMetadata()}
-                      </div>
+                      {uploadedIpfsMetadataUri && (
+                        <span className="text-[9px] text-emerald-400 font-mono font-bold">
+                          {uploadedIpfsMetadataUri.slice(0, 16)}...
+                        </span>
+                      )}
+                    </div>
+                    <div className="rounded-2xl bg-slate-950 p-4 font-mono text-[9px] text-cyan-300 h-44 overflow-y-auto border border-white/5 whitespace-pre leading-relaxed select-all">
+                      {compileLiveMetadata()}
                     </div>
                   </div>
-
                 </div>
               </div>
             </div>
           )}
 
-          {/* Module: NFT Marketplace */}
+
+          {/* ── Module: NFT Marketplace ───────────────────────────────────── */}
           {activeModule === "marketplace" && (
-            <div className="space-y-6 animate-fade-in">
+            <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
@@ -1541,14 +1579,32 @@ export default function DashboardPage() {
                   </h2>
                   <p className="text-slate-400 text-xs mt-1">Acquire and sell premium creator assets trustlessly on WCOS.</p>
                 </div>
-                
                 <div className="flex items-center gap-1 bg-slate-900 border border-white/10 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase">
                   <Info className="h-3.5 w-3.5 text-fuchsia-400" />
                   <span>Auctions: Coming soon</span>
                 </div>
               </div>
 
-              {/* Active Listings Grid */}
+              {/* Marketplace contract status */}
+              {isPlaceholderAddress(CONTRACT_ADDRESSES.WcosMarketplace) && (
+                <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-3.5 flex items-center gap-2 text-[11px] text-amber-400">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                  <span>
+                    <strong>[DEV_MODE]</strong> Marketplace contract not yet deployed on Base Sepolia. 
+                    Buy/Cancel actions are recorded in the backend only. Set <code className="bg-amber-500/10 px-1 rounded">NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS</code> to enable on-chain transactions.
+                  </span>
+                </div>
+              )}
+
+              {/* Active marketplace tx lifecycle */}
+              {(buyTx.state.status !== "idle" || cancelTx.state.status !== "idle") && (
+                <TxLifecycleBanner
+                  status={buyTx.state.status !== "idle" ? buyTx.state.status : cancelTx.state.status}
+                  txHash={buyTx.state.txHash || cancelTx.state.txHash}
+                  error={buyTx.state.error || cancelTx.state.error}
+                />
+              )}
+
               <div className="space-y-4">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Active Fixed Price Listings</h3>
                 {listings.length === 0 ? (
@@ -1571,33 +1627,35 @@ export default function DashboardPage() {
                           <div className="p-4 space-y-2">
                             <div className="flex items-center justify-between">
                               <h4 className="text-sm font-bold text-white truncate">{item.name}</h4>
-                              <span className="text-[8px] bg-white/5 px-2 py-0.5 rounded text-slate-400 font-mono uppercase">
-                                {item.chain}
-                              </span>
+                              <span className="text-[8px] bg-white/5 px-2 py-0.5 rounded text-slate-400 font-mono uppercase">{item.chain}</span>
                             </div>
                             <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{item.description}</p>
-                            
                             <div className="pt-2 text-[9px] font-mono text-slate-500 space-y-1">
                               <p className="truncate">Seller: {item.seller}</p>
                               <p className="truncate">Contract: {item.nftAddress}</p>
                             </div>
                           </div>
                         </div>
-
                         <div className="p-4 border-t border-white/5 bg-slate-900/10 flex gap-2">
                           {item.seller === address ? (
                             <button
                               onClick={() => handleCancelListing(item)}
-                              className="w-full rounded-full border border-rose-500/30 bg-rose-500/5 hover:bg-rose-500/10 py-2 text-xs font-semibold text-rose-400 transition"
+                              disabled={cancelTx.state.isLoading && marketplaceActionId === item.id}
+                              className="w-full rounded-full border border-rose-500/30 bg-rose-500/5 hover:bg-rose-500/10 py-2 text-xs font-semibold text-rose-400 transition disabled:opacity-50"
                             >
-                              Cancel Listing
+                              {cancelTx.state.isLoading && marketplaceActionId === item.id
+                                ? getTxStatusLabel(cancelTx.state.status, { pending_wallet: "Check wallet…", submitted: "Confirming…" })
+                                : "Cancel Listing"}
                             </button>
                           ) : (
                             <button
                               onClick={() => handleBuyNFT(item)}
-                              className="w-full rounded-full bg-fuchsia-600 hover:bg-fuchsia-500 py-2 text-xs font-semibold text-white transition"
+                              disabled={buyTx.state.isLoading && marketplaceActionId === item.id}
+                              className="w-full rounded-full bg-fuchsia-600 hover:bg-fuchsia-500 py-2 text-xs font-semibold text-white transition disabled:opacity-50"
                             >
-                              Buy NFT
+                              {buyTx.state.isLoading && marketplaceActionId === item.id
+                                ? getTxStatusLabel(buyTx.state.status, { pending_wallet: "Check wallet…", submitted: "Confirming…" })
+                                : "Buy NFT"}
                             </button>
                           )}
                         </div>
@@ -1609,9 +1667,9 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Module 3: Contract Builder */}
+          {/* ── Module: Contract Builder ──────────────────────────────────── */}
           {activeModule === "contract-builder" && (
-            <div className="space-y-6 animate-fade-in">
+            <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
                   <Layers className="h-6 w-6 text-fuchsia-400" /> Visual Contract Builder
@@ -1619,24 +1677,24 @@ export default function DashboardPage() {
                 <p className="text-slate-400 text-xs mt-1">Configure and deploy custom smart contracts directly to the network. No coding required.</p>
               </div>
 
+              {/* Chain guard */}
+              <ChainGuardBanner {...chainGuard} />
+
+              {/* Deploy tx lifecycle */}
+              {deployWeb3.status !== "idle" && (
+                <TxLifecycleBanner status={deployWeb3.status} txHash={deployWeb3.deployHash} error={deployWeb3.error} />
+              )}
+
               <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
-                {/* Configuration wizard */}
                 <div className="space-y-5 rounded-3xl border border-white/5 bg-slate-900/20 p-6">
-                  
-                  {/* Contract Type Selector UI */}
                   <div className="space-y-2">
-                    <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">Select Contract Standard Type</label>
+                    <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">Contract Standard</label>
                     <div className="grid grid-cols-3 gap-2">
-                      {["ERC-20", "ERC-721", "ERC-1155"].map((type) => (
-                        <button
-                          key={type}
-                          onClick={() => setContractType(type as any)}
+                      {(["ERC-20", "ERC-721", "ERC-1155"] as const).map((type) => (
+                        <button key={type} onClick={() => setContractType(type)}
                           className={`rounded-xl border py-2.5 px-3 text-xs font-semibold transition ${
-                            contractType === type
-                              ? "border-fuchsia-500/50 bg-fuchsia-500/10 text-fuchsia-300 shadow-lg"
-                              : "border-white/5 bg-slate-950 text-slate-400 hover:border-white/10"
-                          }`}
-                        >
+                            contractType === type ? "border-fuchsia-500/50 bg-fuchsia-500/10 text-fuchsia-300 shadow-lg" : "border-white/5 bg-slate-950 text-slate-400 hover:border-white/10"
+                          }`}>
                           {type}
                         </button>
                       ))}
@@ -1645,119 +1703,99 @@ export default function DashboardPage() {
 
                   <div className="space-y-4 pt-4 border-t border-white/5">
                     <h4 className="text-xs font-bold text-white uppercase tracking-wider">Contract Details</h4>
-                    
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-1.5">
                         <label className="text-[10px] text-slate-500 font-bold uppercase">Token Name</label>
-                        <input
-                          type="text"
-                          value={contractName}
-                          onChange={(e) => setContractName(e.target.value)}
+                        <input type="text" value={contractName} onChange={(e) => setContractName(e.target.value)}
                           className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-400"
-                          placeholder="e.g. My Custom Token"
-                        />
+                          placeholder="e.g. My Custom Token" />
                       </div>
                       <div className="space-y-1.5">
                         <label className="text-[10px] text-slate-500 font-bold uppercase">Token Symbol</label>
-                        <input
-                          type="text"
-                          value={contractSymbol}
-                          onChange={(e) => setContractSymbol(e.target.value)}
+                        <input type="text" value={contractSymbol} onChange={(e) => setContractSymbol(e.target.value)}
                           className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-400"
-                          placeholder="e.g. MCT"
-                        />
+                          placeholder="e.g. MCT" />
                       </div>
                     </div>
-
                     {contractType === "ERC-20" ? (
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
                           <label className="text-[10px] text-slate-500 font-bold uppercase">Total Supply</label>
-                          <input
-                            type="text"
-                            value={tokenSupply}
-                            onChange={(e) => setTokenSupply(e.target.value)}
+                          <input type="text" value={tokenSupply} onChange={(e) => setTokenSupply(e.target.value)}
                             className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-400"
-                            placeholder="1000000"
-                          />
+                            placeholder="1000000" />
                         </div>
                         <div className="space-y-1.5">
                           <label className="text-[10px] text-slate-500 font-bold uppercase">Decimals</label>
-                          <input
-                            type="number"
-                            value={tokenDecimals}
-                            onChange={(e) => setTokenDecimals(parseInt(e.target.value) || 18)}
-                            className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-400"
-                          />
+                          <input type="number" value={tokenDecimals} onChange={(e) => setTokenDecimals(parseInt(e.target.value) || 18)}
+                            className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-400" />
                         </div>
                       </div>
                     ) : (
                       <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase">Creator Royalty Percentage (ERC-2981)</label>
-                        <input
-                          type="number"
-                          value={contractRoyalty}
-                          onChange={(e) => setContractRoyalty(parseInt(e.target.value) || 0)}
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-400"
-                        />
+                        <label className="text-[10px] text-slate-500 font-bold uppercase">Creator Royalty % (ERC-2981)</label>
+                        <input type="number" value={contractRoyalty} onChange={(e) => setContractRoyalty(parseInt(e.target.value) || 0)}
+                          className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-400" />
                       </div>
                     )}
                   </div>
 
                   <div className="flex gap-3 pt-4 border-t border-white/5">
-                    <button
-                      onClick={compileContract}
-                      disabled={isCompiling}
-                      className="flex-1 rounded-full border border-white/10 bg-slate-950 py-3 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition"
-                    >
-                      {isCompiling ? "Compiling Solidity..." : "Compile Contract"}
+                    <button onClick={compileContract} disabled={isCompiling}
+                      className="flex-1 rounded-full border border-white/10 bg-slate-950 py-3 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition">
+                      {isCompiling ? "Compiling Solidity…" : "Compile Contract"}
                     </button>
                     {compiledResult && (
                       <button
                         onClick={deployBuilderContract}
-                        className="flex-1 rounded-full bg-gradient-to-r from-fuchsia-500 to-indigo-600 py-3 text-xs font-semibold text-white shadow hover:opacity-90 transition"
+                        disabled={deployWeb3.isLoading || !chainGuard.isCorrectChain || !chainGuard.isConnected}
+                        className="flex-1 rounded-full bg-gradient-to-r from-fuchsia-500 to-indigo-600 py-3 text-xs font-semibold text-white shadow hover:opacity-90 transition disabled:opacity-50"
                       >
-                        Deploy Contract
+                        {deployWeb3.isLoading
+                          ? getTxStatusLabel(deployWeb3.status, { pending_wallet: "Check wallet…", submitted: "Deploying…" })
+                          : "Deploy Contract"}
                       </button>
                     )}
                   </div>
                 </div>
 
-                {/* Compiled payload visualizer */}
-                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-white mb-4">2. Compiled Build Data</h3>
-                    {compiledResult ? (
-                      <div className="space-y-4">
-                        <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3.5 text-emerald-400 flex items-start gap-2.5 text-xs">
-                          <CheckCircle2 className="h-5 w-5 mt-0.5" />
-                          <div>
-                            <p className="font-bold">Solidity Compilation Successful</p>
-                            <p className="text-[10px] text-emerald-400/80 mt-0.5">Standard contract template resolved. Targets EVM network.</p>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-slate-500 uppercase font-bold">Generated Bytecode</span>
-                          <div className="rounded-xl bg-slate-950 p-3.5 font-mono text-[9px] text-fuchsia-300 max-h-32 overflow-y-auto break-all border border-white/5">
-                            {compiledResult.bytecode}
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-slate-500 uppercase font-bold">Contract ABI Specs</span>
-                          <div className="rounded-xl bg-slate-950 p-3.5 font-mono text-[9px] text-indigo-300 max-h-32 overflow-y-auto border border-white/5">
-                            {JSON.stringify(compiledResult.abi, null, 2)}
-                          </div>
+                <div className="rounded-3xl border border-white/5 bg-slate-900/20 p-6">
+                  <h3 className="text-sm font-bold text-white mb-4">Compiled Build Data</h3>
+                  {compiledResult ? (
+                    <div className="space-y-4">
+                      <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3.5 text-emerald-400 flex items-start gap-2.5 text-xs">
+                        <CheckCircle2 className="h-5 w-5 mt-0.5" />
+                        <div>
+                          <p className="font-bold">Solidity Compilation Successful</p>
+                          <p className="text-[10px] text-emerald-400/80 mt-0.5">Standard contract template resolved. Targets EVM.</p>
                         </div>
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl text-slate-500 text-center">
-                        <Code2 className="h-8 w-8 mb-2" />
-                        <p className="text-xs">Compile your contract details to see the bytecode, metadata, and deployment params.</p>
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-slate-500 uppercase font-bold">Generated Bytecode</span>
+                        <div className="rounded-xl bg-slate-950 p-3.5 font-mono text-[9px] text-fuchsia-300 max-h-32 overflow-y-auto break-all border border-white/5">
+                          {compiledResult.bytecode}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                      <div className="space-y-1">
+                        <span className="text-[10px] text-slate-500 uppercase font-bold">Contract ABI Specs</span>
+                        <div className="rounded-xl bg-slate-950 p-3.5 font-mono text-[9px] text-indigo-300 max-h-32 overflow-y-auto border border-white/5">
+                          {JSON.stringify(compiledResult.abi, null, 2)}
+                        </div>
+                      </div>
+                      {deployWeb3.deployedAddress && (
+                        <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3.5 text-emerald-400 text-xs">
+                          <p className="font-bold">Deployed at:</p>
+                          <a href={`https://sepolia.basescan.org/address/${deployWeb3.deployedAddress}`} target="_blank" rel="noreferrer"
+                            className="font-mono text-[10px] underline break-all">{deployWeb3.deployedAddress}</a>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl text-slate-500 text-center">
+                      <Code2 className="h-8 w-8 mb-2" />
+                      <p className="text-xs">Compile your contract to see the bytecode, ABI, and deployment params.</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1766,51 +1804,40 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* Floating Listing Price Modal */}
+      {/* Listing Price Modal */}
       {isListingModalOpen && selectedAssetForListing && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-6 space-y-4 shadow-2xl relative">
-            <button
-              onClick={() => setIsListingModalOpen(false)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-white transition"
-            >
+            <button onClick={() => setIsListingModalOpen(false)} className="absolute right-4 top-4 text-slate-400 hover:text-white transition">
               <X className="h-5 w-5" />
             </button>
             <h3 className="text-base font-bold text-white">List NFT for Sale</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Confirm your fixed listing price. The NFT will be held in the WCOS marketplace escrow contract until purchased or cancelled.
+              Set your fixed listing price. The NFT will be available for purchase on the WCOS marketplace.
             </p>
             <div className="space-y-2">
               <label className="text-[10px] text-slate-500 uppercase font-bold">Listing Price (ETH)</label>
-              <input
-                type="text"
-                value={listingPrice}
-                onChange={(e) => setListingPrice(e.target.value)}
-                placeholder="0.05"
-                className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-500 font-mono"
-              />
+              <input type="text" value={listingPrice} onChange={(e) => setListingPrice(e.target.value)} placeholder="0.05"
+                className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-white outline-none focus:border-fuchsia-500 font-mono" />
             </div>
-            <button
-              onClick={submitListing}
-              className="w-full rounded-full bg-gradient-to-r from-fuchsia-500 to-indigo-600 py-3 text-xs font-semibold text-white transition hover:opacity-95"
-            >
+            <button onClick={submitListing}
+              className="w-full rounded-full bg-gradient-to-r from-fuchsia-500 to-indigo-600 py-3 text-xs font-semibold text-white transition hover:opacity-95">
               Approve & List NFT
             </button>
           </div>
         </div>
       )}
 
-      {/* Floating AI Assistant Integration */}
+      {/* AI Assistant */}
       <ChatAssistant
         onNavigateToModule={(moduleId) => {
           setActiveModule(moduleId);
-          addTerminalLog(`AI Assistant navigation triggered: switched to ${moduleId}`);
+          addTerminalLog(`AI navigation: switched to ${moduleId}`);
         }}
         onAutoConfigureParams={(moduleId, params) => {
-          setAutoConfigParams(prev => ({ ...prev, [moduleId]: params }));
+          setAutoConfigParams((prev) => ({ ...prev, [moduleId]: params }));
         }}
       />
-      
     </div>
   );
 }

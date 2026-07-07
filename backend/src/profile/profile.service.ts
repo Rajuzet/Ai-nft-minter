@@ -144,4 +144,13 @@ export class ProfileService {
       minBalance,
     };
   }
+
+  async getUserNfts(address: string) {
+    const normalized = address.toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { walletAddress: normalized },
+      include: { aiAssets: true },
+    });
+    return user ? user.aiAssets : [];
+  }
 }

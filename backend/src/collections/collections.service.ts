@@ -116,6 +116,33 @@ export class CollectionsService {
     }));
   }
 
+  async findByOwner(address: string): Promise<CollectionRecord[]> {
+    const normalized = address.toLowerCase();
+    const dbCollections = await this.prisma.nftCollection.findMany({
+      where: { owner: { walletAddress: normalized } },
+      include: { owner: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return dbCollections.map((c) => ({
+      id: c.id,
+      name: c.name,
+      symbol: c.symbol,
+      description: c.description || '',
+      logoUrl: c.coverImage || this.defaultCollection.logoUrl,
+      bannerUrl: this.defaultCollection.bannerUrl,
+      category: 'art',
+      royaltyPercentage: c.royaltyBps / 100,
+      royaltyReceiver: c.owner?.walletAddress || normalized,
+      maxSupply: c.maxSupply,
+      chain: c.network,
+      contractType: 'ERC-721',
+      contractAddress: c.contractAddress,
+      status: c.status as any,
+      timestamp: c.createdAt.toISOString(),
+    }));
+  }
+
   async deploy(id: string, contractAddress: string): Promise<CollectionRecord> {
     try {
       const updated = await this.prisma.nftCollection.update({

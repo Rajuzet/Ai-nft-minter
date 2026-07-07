@@ -12,6 +12,8 @@ import { DaoModule } from './dao/dao.module';
 import { AiOrchestratorModule } from './ai-orchestrator/ai-orchestrator.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ProfileModule } from './profile/profile.module';
+import { IndexerModule } from './indexer/indexer.module';
+import { NewsModule } from './news/news.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { ProfileModule } from './profile/profile.module';
     AiOrchestratorModule,
     AnalyticsModule,
     ProfileModule,
+    IndexerModule,
+    NewsModule,
   ],
   controllers: [],
   providers: [],

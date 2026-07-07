@@ -125,9 +125,11 @@ export default function LandingPage() {
 
         <div className="hidden md:flex items-center gap-6 text-xs font-semibold text-slate-400">
           <a href="#features" className="hover:text-white transition">Features</a>
-          <a href="#stats" className="hover:text-white transition">Ecosystem</a>
-          <a href="#pricing" className="hover:text-white transition">Pricing</a>
-          <a href="http://localhost:4000/api/docs" target="_blank" rel="noreferrer" className="hover:text-white transition">API Docs</a>
+          <a href="/learn" className="hover:text-white transition">Learn</a>
+          <a href="/manual" className="hover:text-white transition">Manual</a>
+          <a href="/news" className="hover:text-white transition">News</a>
+          <a href="/magazine" className="hover:text-white transition">Magazine</a>
+          <a href="http://localhost:3001/api/docs" target="_blank" rel="noreferrer" className="hover:text-white transition">API Docs</a>
         </div>
 
         <div className="flex items-center gap-3">

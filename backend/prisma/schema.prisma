@@ -23,9 +23,11 @@ model User {
   role          String               @default("CREATOR")
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
+  profile       Profile?
   contracts     DeployedContract[]
   aiAssets      AiAsset[]
   collections   NftCollection[]
+  nfts          Nft[]                @relation("UserNfts")
   listings      MarketplaceListing[] @relation("SellerListings")
   purchases     MarketplaceListing[] @relation("BuyerPurchases")
   daoProposals  DaoProposal[]
@@ -33,6 +35,22 @@ model User {
   transactions  TransactionRecord[]
   auditLogs     AuditLog[]
   organizations OrganizationMember[]
+}
+
+model Profile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  displayName String?
+  bio         String?
+  avatarUrl   String?
+  bannerUrl   String?
+  website     String?
+  twitter     String?
+  discord     String?
+  instagram   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Organization {
@@ -64,7 +82,7 @@ model DeployedContract {
   contractType    String
   name            String?
   symbol          String?
-  abi             String        // stored as JSON string (SQLite has no Json type)
+  abi             String // stored as JSON string (SQLite compatibility)
   txHash          String
   status          String        @default("ACTIVE")
   createdAt       DateTime      @default(now())
@@ -90,11 +108,55 @@ model NftCollection {
   createdAt       DateTime             @default(now())
   owner           User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   listings        MarketplaceListing[]
+  nfts            Nft[]                @relation("CollectionNfts")
+}
+
+model Nft {
+  id              String               @id @default(uuid())
+  contractAddress String
+  tokenId         Int
+  ownerAddress    String
+  minterAddress   String?
+  tokenUri        String?
+  name            String?
+  description     String?
+  imageUrl        String?
+  chainId         Int                  @default(84532)
+  blockNumber     Int                  @default(0)
+  txHash          String               @default("")
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  ownerId         String?
+  collectionId    String?
+  owner           User?                @relation("UserNfts", fields: [ownerId], references: [id], onDelete: SetNull)
+  collection      NftCollection?       @relation("CollectionNfts", fields: [collectionId], references: [id], onDelete: SetNull)
+  listings        MarketplaceListing[] @relation("NftListings")
+
+  @@unique([chainId, contractAddress, tokenId])
+}
+
+model IndexedNft {
+  id              String   @id @default(uuid())
+  contractAddress String
+  tokenId         Int
+  ownerAddress    String
+  minterAddress   String?
+  tokenUri        String?
+  name            String?
+  description     String?
+  imageUrl        String?
+  blockNumber     Int
+  txHash          String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([contractAddress, tokenId])
 }
 
 model MarketplaceListing {
   id             String         @id @default(uuid())
   collectionId   String?
+  nftId          String?
   nftAddress     String
   tokenId        Int
   sellerId       String
@@ -112,6 +174,23 @@ model MarketplaceListing {
   seller         User           @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
   buyer          User?          @relation("BuyerPurchases", fields: [buyerId], references: [id], onDelete: SetNull)
   collection     NftCollection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  nft            Nft?           @relation("NftListings", fields: [nftId], references: [id], onDelete: SetNull)
+  sales          NftSale[]      @relation("ListingSales")
+}
+
+model NftSale {
+  id            String              @id @default(uuid())
+  listingId     String?
+  nftAddress    String
+  tokenId       Int
+  sellerAddress String
+  buyerAddress  String
+  price         String
+  royaltyPaid   String              @default("0")
+  txHash        String
+  blockNumber   Int
+  createdAt     DateTime            @default(now())
+  listing       MarketplaceListing? @relation("ListingSales", fields: [listingId], references: [id], onDelete: SetNull)
 }
 
 model DaoOrganization {
@@ -179,7 +258,7 @@ model TransactionRecord {
   network   String
   type      String
   status    String   @default("CONFIRMED")
-  details   String?  // stored as JSON string
+  details   String? // stored as JSON string
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
@@ -192,4 +271,102 @@ model AuditLog {
   ipAddress String?
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model ChainEvent {
+  id              String   @id @default(uuid())
+  eventId         String   @unique // txHash-logIndex
+  chainId         Int      @default(84532)
+  network         String   @default("base-sepolia")
+  contractAddress String
+  eventName       String
+  blockNumber     Int
+  logIndex        Int
+  txHash          String
+  dataJson        String? // stored as JSON string
+  createdAt       DateTime @default(now())
+
+  @@unique([chainId, txHash, logIndex])
+  @@index([contractAddress, eventName])
+  @@index([blockNumber])
+}
+
+model IndexerState {
+  id                 String   @id @default(uuid())
+  network            String   @unique // e.g. "base-sepolia"
+  lastProcessedBlock Int      @default(0)
+  updatedAt          DateTime @updatedAt
+}
+
+model NewsCategory {
+  id               String            @id @default(uuid())
+  name             String            @unique
+  slug             String            @unique
+  description      String?
+  createdAt        DateTime          @default(now())
+  newsArticles     NewsArticle[]     @relation("CategoryNewsArticles")
+  magazineArticles MagazineArticle[] @relation("CategoryMagazineArticles")
+}
+
+model NewsSource {
+  id        String        @id @default(uuid())
+  name      String
+  feedUrl   String        @unique
+  category  String        @default("Web3")
+  isTrusted Boolean       @default(true)
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  articles  NewsArticle[] @relation("SourceArticles")
+}
+
+model NewsArticle {
+  id           String        @id @default(uuid())
+  slug         String        @unique
+  title        String
+  summary      String
+  content      String?
+  source       String
+  sourceUrl    String        @unique
+  url          String?       @unique
+  imageUrl     String?
+  category     String        @default("Web3")
+  publishedAt  DateTime      @default(now())
+  status       String        @default("PUBLISHED") // PUBLISHED | DRAFT | ARCHIVED
+  isFeatured   Boolean       @default(false)
+  readTime     String        @default("3 min")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  sourceId     String?
+  newsSource   NewsSource?   @relation("SourceArticles", fields: [sourceId], references: [id], onDelete: SetNull)
+  categoryId   String?
+  newsCategory NewsCategory? @relation("CategoryNewsArticles", fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([category])
+  @@index([status])
+  @@index([publishedAt])
+}
+
+model MagazineArticle {
+  id           String        @id @default(uuid())
+  slug         String        @unique
+  title        String
+  excerpt      String
+  content      String
+  authorName   String
+  authorRole   String?
+  authorAvatar String?
+  category     String        @default("founder-notes")
+  imageUrl     String?
+  publishedAt  DateTime      @default(now())
+  isEditorPick Boolean       @default(false)
+  isFeatured   Boolean       @default(false)
+  readTime     String        @default("5 min")
+  tags         String        @default("[]") // stored as JSON string array
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  categoryId   String?
+  newsCategory NewsCategory? @relation("CategoryMagazineArticles", fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([category])
+  @@index([isFeatured])
 }
