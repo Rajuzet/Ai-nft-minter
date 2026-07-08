@@ -98,12 +98,8 @@ export class AuthService {
         }
       } catch (err: any) {
         if (err instanceof UnauthorizedException) throw err;
+        console.error('SIWE verification error:', err);
       }
-    }
-
-    // Fallback if message string was not passed directly or siwe parse failed: verify nonce presence
-    if (!isVerified && signature.startsWith('0x') && signature.length >= 130) {
-      isVerified = true;
     }
 
     if (!isVerified) {

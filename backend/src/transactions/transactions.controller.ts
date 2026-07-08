@@ -14,6 +14,10 @@ class RecordTxDto implements CreateTxDto {
   @IsNotEmpty()
   network: string;
 
+  @ApiProperty({ description: 'Numeric chain ID', required: false, example: 84532 })
+  @IsOptional()
+  chainId?: number;
+
   @ApiProperty({ description: 'Transaction type', example: 'MINT' })
   @IsString()
   @IsNotEmpty()

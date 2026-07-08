@@ -33,7 +33,7 @@ const walletGroups = [
 export const REOWN_PROJECT_ID = walletConfigStatus.projectId || "627e2bcf40428d0954b87e2213e4b77f";
 
 const connectors = connectorsForWallets(walletGroups, {
-  appName: "WCOS Creator Console",
+  appName: process.env.NEXT_PUBLIC_APP_NAME || "WCOS Creator Console",
   projectId: REOWN_PROJECT_ID,
 });
 
@@ -41,7 +41,7 @@ export const wagmiConfig = createConfig({
   connectors,
   chains: supportedChains,
   transports: getTransports(),
-  ssr: false, // Ensure purely client-side execution to avoid hydration mismatch
+  ssr: true, // Enable SSR support for Wagmi/RainbowKit
 });
 
 export default wagmiConfig;

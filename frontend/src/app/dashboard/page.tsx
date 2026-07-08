@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount } from "wagmi";
-import { parseEther, parseUnits } from "viem";
+import { SafeWalletButton } from "../../components/ui/SafeWalletButton";
+import { WalletGuard } from "../../components/ui/WalletGuard";
+import { useAccount, useChainId, useSwitchChain } from "wagmi";
+import { parseEther, parseUnits, decodeEventLog } from "viem";
 import {
   Terminal, ShieldAlert, Cpu, Layers, Coins, Compass, Users, Rocket, Code2, 
   Wallet, RefreshCw, Send, CheckCircle2, ChevronRight, Activity, Sparkles, 
@@ -12,11 +13,14 @@ import {
   Tag, ShoppingBag, X, Info, BarChart2, Zap, Key, LogOut, Check
 } from "lucide-react";
 import ChatAssistant from "../../components/assistant/ChatAssistant";
+import { ChainSelector } from "../../components/ui/ChainSelector";
 import {
   CONTRACT_ADDRESSES,
   AINFTMinterABI,
   WcosMarketplaceABI,
   isPlaceholderAddress,
+  useContractAddresses,
+  getExplorerTxUrl,
 } from "../../lib/contracts";
 import { useChainGuard, SUPPORTED_CHAINS } from "../../lib/useChainGuard";
 import { useSiweAuth } from "../../lib/useSiweAuth";
@@ -139,9 +143,10 @@ function ChainGuardBanner({
 }
 
 function TxLifecycleBanner({ status, txHash, error }: { status: TxStatus; txHash?: `0x${string}`; error?: string | null }) {
+  const chainId = useChainId();
   if (status === "idle") return null;
 
-  const explorerBase = "https://sepolia.basescan.org/tx/";
+  const txUrl = txHash ? getExplorerTxUrl(chainId, txHash) : "";
 
   if (status === "pending_wallet") {
     return (
@@ -158,7 +163,7 @@ function TxLifecycleBanner({ status, txHash, error }: { status: TxStatus; txHash
         Transaction submitted — waiting for blockchain confirmation…
         {txHash && (
           <a
-            href={`${explorerBase}${txHash}`}
+            href={txUrl}
             target="_blank"
             rel="noreferrer"
             className="underline ml-1 text-indigo-300"
@@ -176,12 +181,12 @@ function TxLifecycleBanner({ status, txHash, error }: { status: TxStatus; txHash
         Transaction confirmed!
         {txHash && (
           <a
-            href={`${explorerBase}${txHash}`}
+            href={txUrl}
             target="_blank"
             rel="noreferrer"
             className="underline ml-1 text-emerald-300"
           >
-            View on BaseScan
+            View on Explorer
           </a>
         )}
       </div>
@@ -202,10 +207,54 @@ function TxLifecycleBanner({ status, txHash, error }: { status: TxStatus; txHash
 
 export default function DashboardPage() {
   const { address, isConnected, chain } = useAccount();
+  const contractAddresses = useContractAddresses();
   const [activeModule, setActiveModule] = useState<string>("home");
   const [selectedChain, setSelectedChain] = useState<string>("base-sepolia");
 
-  const chainGuard = useChainGuard(baseSepolia.id);
+  // Chain mapping helpers
+  const chainMap = React.useMemo(() => ({
+    "base-sepolia": 84532,
+    "base-mainnet": 8453,
+    "ethereum": 1,
+    "polygon": 137,
+    "arbitrum": 42161,
+    "optimism": 10,
+  } as Record<string, number>), []);
+
+  const chainIdToKey = useCallback((id: number): string => {
+    return Object.keys(chainMap).find((key) => chainMap[key] === id) || "base-sepolia";
+  }, [chainMap]);
+
+  const activeChainId = chainMap[selectedChain] || 84532;
+  const chainGuard = useChainGuard(activeChainId);
+  const walletChainId = useChainId();
+  const { switchChain } = useSwitchChain();
+
+  // Sync dropdown with active wallet chain
+  useEffect(() => {
+    if (isConnected && walletChainId) {
+      const isSupported = Object.values(chainMap).includes(walletChainId);
+      if (isSupported) {
+        const key = chainIdToKey(walletChainId);
+        if (selectedChain !== key) {
+          setSelectedChain(key);
+          addTerminalLog(`Wallet chain detected: ${key.toUpperCase()}`);
+        }
+      }
+    }
+  }, [walletChainId, isConnected, chainMap, chainIdToKey, selectedChain]);
+
+  // Handle dropdown change and switch wallet network
+  const handleChainChange = (val: string) => {
+    setSelectedChain(val);
+    addTerminalLog(`Chain UI switched to: ${val.toUpperCase()}`);
+    const targetId = chainMap[val];
+    if (isConnected && targetId && switchChain) {
+      addTerminalLog(`Requesting wallet switch to chain ID ${targetId}…`);
+      switchChain({ chainId: targetId });
+    }
+  };
+
   const siweAuth = useSiweAuth();
 
   // Terminal activity logs
@@ -439,22 +488,78 @@ export default function DashboardPage() {
 
 
   // ── Mint NFT — real wagmi write ──────────────────────────────────────────────
+  const [pendingMintId, setPendingMintId] = useState<string | null>(null);
+
   const mintTx = useWeb3Transaction({
-    onSuccess: (txHash) => {
+    onSuccess: async (txHash, receipt) => {
       addTerminalLog(`✓ NFT minted on-chain. Tx: ${txHash}`);
+      
+      let extractedTokenId = -1;
+      try {
+        if (receipt && receipt.logs) {
+          for (const log of receipt.logs) {
+            try {
+              const decoded = decodeEventLog({
+                abi: AINFTMinterABI,
+                data: log.data,
+                topics: log.topics,
+              });
+              if (decoded.eventName === 'Transfer') {
+                extractedTokenId = Number((decoded.args as any).tokenId);
+                addTerminalLog(`Extracted Token ID: ${extractedTokenId}`);
+                break;
+              }
+            } catch (e) {
+              // ignore logs that don't decode
+            }
+          }
+        }
+      } catch (err) {
+        addTerminalLog("Warning: Could not parse token ID from logs.");
+      }
+
+      if (pendingMintId && extractedTokenId !== -1 && receipt) {
+        try {
+          await fetch(`${backendUrl}/api/v1/nft/confirm`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: pendingMintId,
+              tokenId: extractedTokenId,
+              txHash,
+              blockNumber: Number(receipt.blockNumber)
+            })
+          });
+          addTerminalLog(`✓ Mint confirmed in database for Token ID ${extractedTokenId}`);
+        } catch (err: any) {
+          addTerminalLog(`Database sync failed: ${err.message}`);
+        }
+      }
+
       setAiStatus("NFT Minted successfully!");
       setDraftAssets((prev) =>
         prev.map((asset) =>
           asset.id === selectedDraftId ? { ...asset, status: "MINTED", txHash } : asset
         )
       );
+      setPendingMintId(null);
     },
-    onError: (err) => {
+    onError: async (err) => {
       addTerminalLog(`✗ Mint failed: ${err}`);
+      if (pendingMintId) {
+        try {
+          await fetch(`${backendUrl}/api/v1/nft/failed`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: pendingMintId, txHash: "" })
+          });
+        } catch (e) {}
+      }
       setAiStatus("Minting failed.");
       setDraftAssets((prev) =>
         prev.map((asset) => (asset.id === selectedDraftId ? { ...asset, status: "DRAFT" } : asset))
       );
+      setPendingMintId(null);
     },
   });
 
@@ -547,13 +652,13 @@ export default function DashboardPage() {
     }
   };
 
-  const handleMintDraft = (draft: DraftAsset) => {
+  const handleMintDraft = async (draft: DraftAsset) => {
     if (!isConnected || !address) { addTerminalLog("Wallet not connected."); return; }
-    if (!chainGuard.isCorrectChain) { addTerminalLog("Wrong chain — please switch to Base Sepolia."); return; }
+    if (!chainGuard.isCorrectChain) { addTerminalLog(`Wrong chain — please switch your wallet to ${chainGuard.requiredChainName}.`); return; }
 
     const mintTargetContract = (draft.collectionAddress && !isPlaceholderAddress(draft.collectionAddress))
       ? draft.collectionAddress
-      : CONTRACT_ADDRESSES.AINFTMinter;
+      : contractAddresses.AINFTMinter;
 
     if (!mintTargetContract || isPlaceholderAddress(mintTargetContract)) {
       addTerminalLog("Contract address not set — configure NEXT_PUBLIC_AINFT_MINTER_ADDRESS.");
@@ -565,6 +670,30 @@ export default function DashboardPage() {
     setDraftAssets((prev) =>
       prev.map((asset) => (asset.id === draft.id ? { ...asset, status: "MINTING" } : asset))
     );
+
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/nft/pending`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contractAddress: mintTargetContract,
+          chainId: Number(chainId || 84532),
+          ownerAddress: address,
+          name: draft.name,
+          description: draft.description,
+          tokenUri: draft.metadataUrl,
+          imageUrl: draft.imageUrl,
+          prompt: draft.prompt,
+          aiModel: draft.category
+        })
+      });
+      const data = await res.json();
+      if (data.id) {
+        setPendingMintId(data.id);
+      }
+    } catch (err: any) {
+      addTerminalLog(`Warning: Failed to create pending record: ${err.message}`);
+    }
 
     mintTx.execute({
       address: mintTargetContract as `0x${string}`,
@@ -640,7 +769,7 @@ export default function DashboardPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nftAddress: selectedAssetForListing.collectionAddress || CONTRACT_ADDRESSES.AINFTMinter,
+          nftAddress: selectedAssetForListing.collectionAddress || contractAddresses.AINFTMinter,
           tokenId: selectedAssetForListing.tokenId ?? Math.floor(Math.random() * 1000),
           seller: address || "0x0000000000000000000000000000000000000000",
           price: listingPrice, collectionName: "AI Studio Collective", chain: selectedChain,
@@ -663,23 +792,17 @@ export default function DashboardPage() {
 
   const handleBuyNFT = (listing: ListingRecord) => {
     if (!isConnected || !address) { addTerminalLog("Connect wallet to purchase."); return; }
-    if (!chainGuard.isCorrectChain) { addTerminalLog("Wrong chain — switch to Base Sepolia."); return; }
+    if (!chainGuard.isCorrectChain) { addTerminalLog(`Wrong chain — switch wallet to ${chainGuard.requiredChainName}.`); return; }
 
-    if (isPlaceholderAddress(CONTRACT_ADDRESSES.WcosMarketplace)) {
-      addTerminalLog("[DEV_MODE] Marketplace contract not deployed — recording buy in backend only.");
-      // DEV_MODE: backend-only purchase record without on-chain call
-      const mockTx = ("0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")) as `0x${string}`;
-      fetch(`${backendUrl}/api/v1/marketplace/buy`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: listing.id, buyer: address, txHash: mockTx }),
-      }).then(() => { addTerminalLog(`[DEV_MODE] Purchase recorded (no on-chain tx). Ref: ${mockTx}`); fetchListings(); });
+    if (isPlaceholderAddress(contractAddresses.WcosMarketplace)) {
+      addTerminalLog(`Error: Marketplace contract is not configured on ${chainGuard.requiredChainName}.`);
       return;
     }
 
     setMarketplaceActionId(listing.id);
     addTerminalLog(`Initiating on-chain purchase of "${listing.name}" for ${listing.price} ETH…`);
     buyTx.execute({
-      address: CONTRACT_ADDRESSES.WcosMarketplace,
+      address: contractAddresses.WcosMarketplace,
       abi: WcosMarketplaceABI,
       functionName: "buyToken",
       args: [listing.nftAddress as `0x${string}`, BigInt(listing.tokenId)],
@@ -688,21 +811,17 @@ export default function DashboardPage() {
   };
 
   const handleCancelListing = (listing: ListingRecord) => {
-    if (!chainGuard.isCorrectChain) { addTerminalLog("Wrong chain — switch to Base Sepolia."); return; }
+    if (!chainGuard.isCorrectChain) { addTerminalLog(`Wrong chain — switch wallet to ${chainGuard.requiredChainName}.`); return; }
 
-    if (isPlaceholderAddress(CONTRACT_ADDRESSES.WcosMarketplace)) {
-      addTerminalLog("[DEV_MODE] Marketplace contract not deployed — cancelling in backend only.");
-      fetch(`${backendUrl}/api/v1/marketplace/cancel`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: listing.id }),
-      }).then(() => { addTerminalLog("[DEV_MODE] Listing cancelled in backend."); fetchListings(); });
+    if (isPlaceholderAddress(contractAddresses.WcosMarketplace)) {
+      addTerminalLog(`Error: Marketplace contract is not configured on ${chainGuard.requiredChainName}.`);
       return;
     }
 
     setMarketplaceActionId(listing.id);
     addTerminalLog(`Cancelling on-chain listing for "${listing.name}"…`);
     cancelTx.execute({
-      address: CONTRACT_ADDRESSES.WcosMarketplace,
+      address: contractAddresses.WcosMarketplace,
       abi: WcosMarketplaceABI,
       functionName: "cancelListing",
       args: [listing.nftAddress as `0x${string}`, BigInt(listing.tokenId)],
@@ -882,20 +1001,7 @@ export default function DashboardPage() {
             </button>
           </div>
 
-          <div className="flex items-center gap-1 bg-slate-900 border border-white/10 p-1.5 rounded-full text-xs">
-            <Globe className="h-3.5 w-3.5 text-indigo-400 ml-1.5" />
-            <select
-              value={selectedChain}
-              onChange={(e) => { setSelectedChain(e.target.value); addTerminalLog(`Chain UI switched to: ${e.target.value.toUpperCase()}`); }}
-              className="bg-transparent text-white text-[11px] font-bold outline-none pr-2 cursor-pointer"
-            >
-              <option value="base-sepolia" className="bg-slate-950">Base Sepolia</option>
-              <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
-              <option value="ethereum" className="bg-slate-950">Ethereum</option>
-              <option value="polygon" className="bg-slate-950">Polygon</option>
-              <option value="arbitrum" className="bg-slate-950">Arbitrum</option>
-            </select>
-          </div>
+          <ChainSelector />
 
           {/* SIWE Wallet Authentication Widget */}
           {isConnected && !siweAuth.isAuthenticated ? (
@@ -926,7 +1032,7 @@ export default function DashboardPage() {
             </div>
           ) : null}
 
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
@@ -1027,8 +1133,8 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        {/* Central Workspace */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
+          <WalletGuard requiredFeature="Creator Dashboard">
 
           {/* ── Module: Creator Dashboard ─────────────────────────────────── */}
           {activeModule === "home" && (
@@ -1586,12 +1692,12 @@ export default function DashboardPage() {
               </div>
 
               {/* Marketplace contract status */}
-              {isPlaceholderAddress(CONTRACT_ADDRESSES.WcosMarketplace) && (
-                <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-3.5 flex items-center gap-2 text-[11px] text-amber-400">
+              {isPlaceholderAddress(contractAddresses.WcosMarketplace) && (
+                <div className="rounded-2xl border border-rose-500/25 bg-rose-500/5 p-3.5 flex items-center gap-2 text-[11px] text-rose-400 animate-pulse">
                   <AlertTriangle className="h-4 w-4 flex-shrink-0" />
                   <span>
-                    <strong>[DEV_MODE]</strong> Marketplace contract not yet deployed on Base Sepolia. 
-                    Buy/Cancel actions are recorded in the backend only. Set <code className="bg-amber-500/10 px-1 rounded">NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS</code> to enable on-chain transactions.
+                    Marketplace contract is not configured on the selected network ({chainGuard.requiredChainName}). 
+                    Smart contract interactions are disabled.
                   </span>
                 </div>
               )}
@@ -1800,7 +1906,7 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
-
+          </WalletGuard>
         </main>
       </div>
 

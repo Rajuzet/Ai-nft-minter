@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { SafeWalletButton } from "../../../components/ui/SafeWalletButton";
+import { WalletGuard } from "../../../components/ui/WalletGuard";
 import { useAccount } from "wagmi";
 import { useParams } from "next/navigation";
 import {
@@ -87,7 +88,7 @@ export default function DaoDetailPage() {
               <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
             </select>
           </div>
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
@@ -139,7 +140,8 @@ export default function DaoDetailPage() {
 
         {/* Central details */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
-          {loading ? (
+          <WalletGuard requiredFeature="DAO Governance">
+            {loading ? (
             <div className="flex items-center justify-center p-12 text-slate-500">
               <RefreshCw className="h-8 w-8 animate-spin text-teal-500" />
             </div>
@@ -233,7 +235,7 @@ export default function DaoDetailPage() {
               <p className="text-sm font-semibold">DAO record not found.</p>
             </div>
           )}
-
+          </WalletGuard>
         </main>
       </div>
 

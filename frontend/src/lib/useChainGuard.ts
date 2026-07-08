@@ -1,11 +1,15 @@
 "use client";
 
 import { useAccount, useChainId, useSwitchChain } from "wagmi";
-import { baseSepolia, base } from "wagmi/chains";
+import { baseSepolia, base, mainnet, polygon, arbitrum, optimism } from "wagmi/chains";
 
 export const SUPPORTED_CHAINS = {
   [baseSepolia.id]: { name: "Base Sepolia", chainId: baseSepolia.id, testnet: true },
   [base.id]: { name: "Base Mainnet", chainId: base.id, testnet: false },
+  [mainnet.id]: { name: "Ethereum Mainnet", chainId: mainnet.id, testnet: false },
+  [polygon.id]: { name: "Polygon", chainId: polygon.id, testnet: false },
+  [arbitrum.id]: { name: "Arbitrum One", chainId: arbitrum.id, testnet: false },
+  [optimism.id]: { name: "OP Mainnet", chainId: optimism.id, testnet: false },
 } as const;
 
 export type SupportedChainId = keyof typeof SUPPORTED_CHAINS;

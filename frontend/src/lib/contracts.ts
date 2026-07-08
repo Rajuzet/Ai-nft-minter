@@ -1,35 +1,145 @@
 // ─── Chain config ─────────────────────────────────────────────────────────────
 
-import { baseSepolia, base } from "wagmi/chains";
+import { baseSepolia, base, mainnet, polygon, arbitrum, optimism } from "wagmi/chains";
+import { useChainId } from "wagmi";
 
 /** Chain IDs supported by WCOS on-chain features */
-export const SUPPORTED_CHAIN_IDS = [baseSepolia.id, base.id] as const;
+export const SUPPORTED_CHAIN_IDS = [
+  baseSepolia.id,
+  base.id,
+  mainnet.id,
+  polygon.id,
+  arbitrum.id,
+  optimism.id,
+] as const;
 
 /** Primary testnet chain — used for development and default chain guard */
 export const PRIMARY_TESTNET_CHAIN_ID = baseSepolia.id;
 
-// ─── Contract addresses ───────────────────────────────────────────────────────
+// ─── Multi-Chain Contract addresses ──────────────────────────────────────────
 
-export const CONTRACT_ADDRESSES = {
-  AINFTMinter: (process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS ||
-    "0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A") as `0x${string}`,
+export const MULTI_CHAIN_CONTRACT_ADDRESSES: Record<
+  number,
+  {
+    AINFTMinter: `0x${string}`;
+    WcosMarketplace: `0x${string}`;
+    WcosStaking: `0x${string}`;
+    WcosGovernanceToken: `0x${string}`;
+    WcosGovernor: `0x${string}`;
+    WcosTreasury: `0x${string}`;
+    WcosSwapRouter: `0x${string}`;
+  }
+> = {
+  [baseSepolia.id]: {
+    AINFTMinter: (process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS || "0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A") as `0x${string}`,
+    WcosMarketplace: (process.env.NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosStaking: (process.env.NEXT_PUBLIC_WCOS_STAKING_ADDRESS || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernanceToken: (process.env.NEXT_PUBLIC_WCOS_GOVERNANCE_TOKEN_ADDRESS || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernor: (process.env.NEXT_PUBLIC_WCOS_GOVERNOR_ADDRESS || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosTreasury: (process.env.NEXT_PUBLIC_WCOS_TREASURY_ADDRESS || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosSwapRouter: (process.env.NEXT_PUBLIC_WCOS_SWAP_ROUTER_ADDRESS || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+  },
+  [base.id]: {
+    AINFTMinter: (process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS_BASE || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosMarketplace: (process.env.NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS_BASE || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosStaking: (process.env.NEXT_PUBLIC_WCOS_STAKING_ADDRESS_BASE || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernanceToken: (process.env.NEXT_PUBLIC_WCOS_GOVERNANCE_TOKEN_ADDRESS_BASE || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernor: (process.env.NEXT_PUBLIC_WCOS_GOVERNOR_ADDRESS_BASE || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosTreasury: (process.env.NEXT_PUBLIC_WCOS_TREASURY_ADDRESS_BASE || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosSwapRouter: (process.env.NEXT_PUBLIC_WCOS_SWAP_ROUTER_ADDRESS_BASE || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+  },
+  [mainnet.id]: {
+    AINFTMinter: (process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS_MAINNET || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosMarketplace: (process.env.NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS_MAINNET || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosStaking: (process.env.NEXT_PUBLIC_WCOS_STAKING_ADDRESS_MAINNET || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernanceToken: (process.env.NEXT_PUBLIC_WCOS_GOVERNANCE_TOKEN_ADDRESS_MAINNET || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernor: (process.env.NEXT_PUBLIC_WCOS_GOVERNOR_ADDRESS_MAINNET || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosTreasury: (process.env.NEXT_PUBLIC_WCOS_TREASURY_ADDRESS_MAINNET || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosSwapRouter: (process.env.NEXT_PUBLIC_WCOS_SWAP_ROUTER_ADDRESS_MAINNET || "0xE592427A0AEce92De3Edee1F18E0157C05861564") as `0x${string}`,
+  },
+  [polygon.id]: {
+    AINFTMinter: (process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS_POLYGON || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosMarketplace: (process.env.NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS_POLYGON || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosStaking: (process.env.NEXT_PUBLIC_WCOS_STAKING_ADDRESS_POLYGON || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernanceToken: (process.env.NEXT_PUBLIC_WCOS_GOVERNANCE_TOKEN_ADDRESS_POLYGON || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernor: (process.env.NEXT_PUBLIC_WCOS_GOVERNOR_ADDRESS_POLYGON || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosTreasury: (process.env.NEXT_PUBLIC_WCOS_TREASURY_ADDRESS_POLYGON || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosSwapRouter: (process.env.NEXT_PUBLIC_WCOS_SWAP_ROUTER_ADDRESS_POLYGON || "0xE592427A0AEce92De3Edee1F18E0157C05861564") as `0x${string}`,
+  },
+  [arbitrum.id]: {
+    AINFTMinter: (process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS_ARBITRUM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosMarketplace: (process.env.NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS_ARBITRUM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosStaking: (process.env.NEXT_PUBLIC_WCOS_STAKING_ADDRESS_ARBITRUM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernanceToken: (process.env.NEXT_PUBLIC_WCOS_GOVERNANCE_TOKEN_ADDRESS_ARBITRUM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernor: (process.env.NEXT_PUBLIC_WCOS_GOVERNOR_ADDRESS_ARBITRUM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosTreasury: (process.env.NEXT_PUBLIC_WCOS_TREASURY_ADDRESS_ARBITRUM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosSwapRouter: (process.env.NEXT_PUBLIC_WCOS_SWAP_ROUTER_ADDRESS_ARBITRUM || "0xE592427A0AEce92De3Edee1F18E0157C05861564") as `0x${string}`,
+  },
+  [optimism.id]: {
+    AINFTMinter: (process.env.NEXT_PUBLIC_AINFT_MINTER_ADDRESS_OPTIMISM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosMarketplace: (process.env.NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS_OPTIMISM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosStaking: (process.env.NEXT_PUBLIC_WCOS_STAKING_ADDRESS_OPTIMISM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernanceToken: (process.env.NEXT_PUBLIC_WCOS_GOVERNANCE_TOKEN_ADDRESS_OPTIMISM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosGovernor: (process.env.NEXT_PUBLIC_WCOS_GOVERNOR_ADDRESS_OPTIMISM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosTreasury: (process.env.NEXT_PUBLIC_WCOS_TREASURY_ADDRESS_OPTIMISM || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+    WcosSwapRouter: (process.env.NEXT_PUBLIC_WCOS_SWAP_ROUTER_ADDRESS_OPTIMISM || "0xE592427A0AEce92De3Edee1F18E0157C05861564") as `0x${string}`,
+  },
+};
 
-  // Marketplace — placeholder until deployed to Base Sepolia. Will revert on-chain.
-  WcosMarketplace: (process.env.NEXT_PUBLIC_WCOS_MARKETPLACE_ADDRESS ||
-    "0x0000000000000000000000000000000000000000") as `0x${string}`,
+export const getContractAddresses = (chainId?: number) => {
+  const activeChainId = chainId || baseSepolia.id;
+  const addresses = MULTI_CHAIN_CONTRACT_ADDRESSES[activeChainId];
+  if (!addresses) {
+    return MULTI_CHAIN_CONTRACT_ADDRESSES[baseSepolia.id];
+  }
+  return addresses;
+};
 
-  // Staking — placeholder until governance token contract is deployed.
-  WcosStaking: (process.env.NEXT_PUBLIC_WCOS_STAKING_ADDRESS ||
-    "0x0000000000000000000000000000000000000000") as `0x${string}`,
+export function useContractAddresses() {
+  const chainId = useChainId();
+  return getContractAddresses(chainId);
+}
 
-  // Governance token — placeholder.
-  WcosGovernanceToken: (process.env.NEXT_PUBLIC_WCOS_GOVERNANCE_TOKEN_ADDRESS ||
-    "0x0000000000000000000000000000000000000000") as `0x${string}`,
-} as const;
+export const CONTRACT_ADDRESSES = new Proxy(
+  {},
+  {
+    get(_, prop) {
+      const addresses = getContractAddresses(
+        typeof window !== "undefined" && (window as any).__WAGMI_ACTIVE_CHAIN_ID__
+          ? (window as any).__WAGMI_ACTIVE_CHAIN_ID__
+          : baseSepolia.id
+      );
+      return addresses[prop as keyof typeof addresses];
+    },
+  }
+) as unknown as typeof MULTI_CHAIN_CONTRACT_ADDRESSES[typeof baseSepolia.id];
 
 /** Returns true when the given address is a placeholder zero address */
 export const isPlaceholderAddress = (addr: string) =>
   addr === "0x0000000000000000000000000000000000000000";
+
+export const getExplorerTxUrl = (chainId: number, txHash: string): string => {
+  const baseUrls: Record<number, string> = {
+    84532: "https://sepolia.basescan.org",
+    8453: "https://basescan.org",
+    1: "https://etherscan.io",
+    137: "https://polygonscan.com",
+    42161: "https://arbiscan.io",
+    10: "https://optimistic.etherscan.io",
+  };
+  const baseUrl = baseUrls[chainId] || "https://etherscan.io";
+  return `${baseUrl}/tx/${txHash}`;
+};
+
+export const isContractConfigured = (
+  chainId: number,
+  contractKey: keyof typeof MULTI_CHAIN_CONTRACT_ADDRESSES[typeof baseSepolia.id]
+): boolean => {
+  const addresses = MULTI_CHAIN_CONTRACT_ADDRESSES[chainId];
+  if (!addresses) return false;
+  const addr = addresses[contractKey];
+  return addr !== undefined && !isPlaceholderAddress(addr);
+};
 
 // ─── AINFTMinter ABI ──────────────────────────────────────────────────────────
 

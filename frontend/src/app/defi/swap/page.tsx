@@ -1,8 +1,15 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useSendTransaction, useWaitForTransactionReceipt } from "wagmi";
+import {
+  ERC20ApproveABI,
+  isPlaceholderAddress,
+  getExplorerTxUrl,
+} from "../../../lib/contracts";
+import { SafeWalletButton } from "../../../components/ui/SafeWalletButton";
+import { WalletGuard } from "../../../components/ui/WalletGuard";
+import { ChainSelector } from "../../../components/ui/ChainSelector";
+import { useAccount, useChainId, useSwitchChain, useSendTransaction, useWaitForTransactionReceipt } from "wagmi";
 import { parseEther, encodeFunctionData } from "viem";
 import {
   Coins, Wallet, Compass, Users, Layers, Sparkles, FileText, ShoppingBag, 
@@ -19,7 +26,46 @@ export default function DefiSwapPage() {
   const [activeModule] = useState("swap");
   const [selectedChain, setSelectedChain] = useState("base-sepolia");
 
-  const chainGuard = useChainGuard(baseSepolia.id);
+  // Chain mapping helpers
+  const chainMap = React.useMemo(() => ({
+    "base-sepolia": 84532,
+    "base-mainnet": 8453,
+    "ethereum": 1,
+    "polygon": 137,
+    "arbitrum": 42161,
+    "optimism": 10,
+  } as Record<string, number>), []);
+
+  const chainIdToKey = React.useCallback((id: number): string => {
+    return Object.keys(chainMap).find((key) => chainMap[key] === id) || "base-sepolia";
+  }, [chainMap]);
+
+  const activeChainId = chainMap[selectedChain] || 84532;
+  const chainGuard = useChainGuard(activeChainId);
+  const walletChainId = useChainId();
+  const { switchChain } = useSwitchChain();
+
+  // Sync dropdown with active wallet chain
+  useEffect(() => {
+    if (isConnected && walletChainId) {
+      const isSupported = Object.values(chainMap).includes(walletChainId);
+      if (isSupported) {
+        const key = chainIdToKey(walletChainId);
+        if (selectedChain !== key) {
+          setSelectedChain(key);
+        }
+      }
+    }
+  }, [walletChainId, isConnected, chainMap, chainIdToKey, selectedChain]);
+
+  // Handle dropdown change and switch wallet network
+  const handleChainChange = (val: string) => {
+    setSelectedChain(val);
+    const targetId = chainMap[val];
+    if (isConnected && targetId && switchChain) {
+      switchChain({ chainId: targetId });
+    }
+  };
 
   const [fromToken, setFromToken] = useState("ETH");
   const [toToken, setToToken] = useState("WGT");
@@ -37,7 +83,6 @@ export default function DefiSwapPage() {
 
   const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
-  // ── Real wagmi sendTransaction for swap ────────────────────────────────────
   const { data: swapTxHash, sendTransaction, error: sendError, isPending: isSending } = useSendTransaction();
   const { isLoading: isWaitingConfirm, isSuccess: isSwapConfirmed } = useWaitForTransactionReceipt({ hash: swapTxHash });
 
@@ -67,7 +112,7 @@ export default function DefiSwapPage() {
 
   const triggerSwapTx = () => {
     if (!isConnected) return;
-    if (!chainGuard.isCorrectChain) { setSwapError("Wrong chain — switch to Base Sepolia."); return; }
+    if (!chainGuard.isCorrectChain) { setSwapError(`Wrong chain — switch wallet to ${chainGuard.requiredChainName}.`); return; }
     setIsConfirming(true);
   };
 
@@ -76,8 +121,7 @@ export default function DefiSwapPage() {
     setSwapError("");
 
     if (!routerAddress || routerAddress === "0x0000000000000000000000000000000000000000") {
-      // [DEV_MODE] No router deployed — show informative error
-      setSwapError("[DEV_MODE] Swap router not deployed on Base Sepolia. Set NEXT_PUBLIC_UNISWAP_ROUTER_ADDRESS to enable on-chain swaps.");
+      setSwapError(`Swap router is not configured on the selected network (${chainGuard.requiredChainName}).`);
       return;
     }
 
@@ -112,18 +156,8 @@ export default function DefiSwapPage() {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1 bg-slate-900 border border-white/10 p-1.5 rounded-full text-xs">
-            <Globe className="h-3.5 w-3.5 text-indigo-400 ml-1.5" />
-            <select
-              value={selectedChain}
-              onChange={(e) => setSelectedChain(e.target.value)}
-              className="bg-transparent text-white text-[11px] font-bold outline-none pr-2 cursor-pointer"
-            >
-              <option value="base-sepolia" className="bg-slate-950">Base Sepolia</option>
-              <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
-            </select>
-          </div>
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <ChainSelector />
+          <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
@@ -185,8 +219,8 @@ export default function DefiSwapPage() {
 
         {/* Central swap panel */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 flex flex-col items-center justify-center">
-          
-          <div className="max-w-md w-full rounded-3xl border border-white/10 bg-slate-900/40 p-6 space-y-4 shadow-2xl backdrop-blur-xl relative">
+          <WalletGuard requiredFeature="DeFi Swap Module">
+            <div className="max-w-md w-full rounded-3xl border border-white/10 bg-slate-900/40 p-6 space-y-4 shadow-2xl backdrop-blur-xl relative">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <RefreshCw className="h-5 w-5 text-amber-400" /> Swap Assets
@@ -340,7 +374,7 @@ export default function DefiSwapPage() {
             {swapTxHash && !isSwapConfirmed && (
               <div className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl flex items-center gap-2 text-xs text-indigo-400">
                 <RefreshCw className="h-4 w-4 animate-spin" /> Transaction submitted — confirming on-chain…
-                <a href={`https://sepolia.basescan.org/tx/${swapTxHash}`} target="_blank" rel="noreferrer" className="underline ml-1 text-indigo-300">View</a>
+                <a href={getExplorerTxUrl(walletChainId, swapTxHash)} target="_blank" rel="noreferrer" className="underline ml-1 text-indigo-300">View</a>
               </div>
             )}
 
@@ -351,13 +385,13 @@ export default function DefiSwapPage() {
                   <CheckCircle2 className="h-5 w-5 text-emerald-400" />
                   <span>Swap Confirmed</span>
                 </div>
-                <a href={`https://sepolia.basescan.org/tx/${swapTxHash}`} target="_blank" rel="noreferrer"
+                <a href={getExplorerTxUrl(walletChainId, swapTxHash)} target="_blank" rel="noreferrer"
                   className="text-[9px] font-mono text-emerald-500/80 truncate block underline">{swapTxHash}</a>
               </div>
             )}
 
           </div>
-
+          </WalletGuard>
         </main>
       </div>
 

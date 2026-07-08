@@ -33,6 +33,11 @@ class CreateListingDto {
   @IsNotEmpty()
   chain: string;
 
+  @ApiProperty({ description: 'Numeric Chain ID', required: false, example: 84532 })
+  @IsNumber()
+  @IsOptional()
+  chainId?: number;
+
   @ApiProperty({ description: 'NFT Image URL', example: 'https://image.png' })
   @IsString()
   @IsNotEmpty()

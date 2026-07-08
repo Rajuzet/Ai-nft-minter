@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Param, HttpCode, HttpStatus, UseGuards, Re
 import { ApiTags, ApiOperation, ApiResponse, ApiProperty, ApiHeader } from '@nestjs/swagger';
 import { DaoService, DaoRecord, ProposalRecord } from './dao.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { IsNotEmpty, IsString, IsNumber, IsBoolean } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsBoolean, IsOptional } from 'class-validator';
 
 class CreateDaoDto {
   @ApiProperty({ description: 'DAO Community Name', example: 'Core DAO' })
@@ -41,6 +41,11 @@ class CreateDaoDto {
   @IsString()
   @IsNotEmpty()
   treasuryAddress: string;
+
+  @ApiProperty({ description: 'Numeric chain ID', required: false, example: 84532 })
+  @IsNumber()
+  @IsOptional()
+  chainId?: number;
 }
 
 class CreateProposalDto {
@@ -63,6 +68,11 @@ class CreateProposalDto {
   @IsString()
   @IsNotEmpty()
   valueTransferred: string;
+
+  @ApiProperty({ description: 'Numeric chain ID', required: false, example: 84532 })
+  @IsNumber()
+  @IsOptional()
+  chainId?: number;
 }
 
 class CastVoteDto {

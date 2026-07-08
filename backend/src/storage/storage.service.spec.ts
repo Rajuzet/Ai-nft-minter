@@ -18,15 +18,15 @@ describe('StorageService', () => {
 
   it('should upload image buffer and return public URL', async () => {
     const fakeBuffer = Buffer.from('fake-image-data');
-    const result = await service.uploadImage(fakeBuffer, 'image/png');
+    const result = await service.uploadImage(fakeBuffer, 'test-image.png', 'image/png');
     expect(result).toBeDefined();
-    expect(result.url).toContain('http');
+    expect(result).toContain('http');
   });
 
   it('should upload metadata object and return metadata URL', async () => {
     const metadata = { name: 'Test NFT', description: 'Test Description', image: 'https://example.com/nft.png' };
-    const result = await service.uploadMetadata(metadata);
+    const result = await service.uploadMetadata(metadata, 'test-metadata.json');
     expect(result).toBeDefined();
-    expect(result.url).toContain('http');
+    expect(result).toContain('ipfs');
   });
 });

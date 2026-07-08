@@ -1,18 +1,12 @@
 import { http } from "wagmi";
-import { base, baseSepolia } from "wagmi/chains";
+import { WCOS_CHAINS } from "./chains";
 
 export const getTransports = () => {
-  const baseSepoliaRpc =
-    process.env.NEXT_PUBLIC_RPC_URL ||
-    process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ||
-    "https://sepolia.base.org";
-
-  const baseRpc =
-    process.env.NEXT_PUBLIC_BASE_RPC_URL ||
-    "https://mainnet.base.org";
-
-  return {
-    [baseSepolia.id]: http(baseSepoliaRpc),
-    [base.id]: http(baseRpc),
-  };
+  const transports: Record<number, any> = {};
+  Object.values(WCOS_CHAINS).forEach((config) => {
+    if (config.enabled && config.rpcUrl) {
+      transports[config.id] = http(config.rpcUrl);
+    }
+  });
+  return transports;
 };

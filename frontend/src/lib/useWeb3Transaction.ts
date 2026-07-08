@@ -29,7 +29,7 @@ export interface TxState {
 // ─── Write contract transaction hook ─────────────────────────────────────────
 
 interface UseWeb3TransactionParams {
-  onSuccess?: (txHash: `0x${string}`) => void;
+  onSuccess?: (txHash: `0x${string}`, receipt?: any) => void;
   onError?: (error: string) => void;
 }
 
@@ -53,6 +53,7 @@ export function useWeb3Transaction({ onSuccess, onError }: UseWeb3TransactionPar
     isLoading: isWaiting,
     isSuccess: isConfirmed,
     error: waitError,
+    data: receipt,
   } = useWaitForTransactionReceipt({ hash: txHash });
 
   // Track transitions
@@ -72,9 +73,9 @@ export function useWeb3Transaction({ onSuccess, onError }: UseWeb3TransactionPar
   useEffect(() => {
     if (isConfirmed && txHash) {
       setStatus("confirmed");
-      onSuccess?.(txHash);
+      onSuccess?.(txHash, receipt);
     }
-  }, [isConfirmed, txHash]);
+  }, [isConfirmed, txHash, receipt]);
 
   useEffect(() => {
     if (writeError) {

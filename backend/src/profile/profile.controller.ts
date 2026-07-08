@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Post, Param, Body, Query, Headers, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Put, Post, Param, Body, Query, Headers, UseGuards, Req, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiHeader } from '@nestjs/swagger';
 import { ProfileService } from './profile.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -31,8 +31,13 @@ export class ProfileController {
   }
 
   @Put(':address')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Update creator profile fields' })
-  updateProfile(@Param('address') address: string, @Body() update: any) {
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  updateProfile(@Param('address') address: string, @Body() update: any, @Req() req: any) {
+    if (req.user.walletAddress.toLowerCase() !== address.toLowerCase()) {
+      throw new ForbiddenException('You can only update your own creator profile');
+    }
     return this.profileService.updateProfile(address, update);
   }
 

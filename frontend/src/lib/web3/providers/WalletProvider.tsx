@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { WagmiProvider } from "wagmi";
 import { RainbowKitProvider } from "@rainbow-me/rainbowkit";
+import "@rainbow-me/rainbowkit/styles.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { wagmiConfig, walletConfigStatus } from "../config/walletConfig";
 import { checkWalletHealth } from "../utils/checkWalletHealth";

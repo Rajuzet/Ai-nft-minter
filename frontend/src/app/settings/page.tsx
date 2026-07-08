@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { SafeWalletButton } from "../../components/ui/SafeWalletButton";
+import { WalletGuard } from "../../components/ui/WalletGuard";
 import { useAccount } from "wagmi";
 import {
   Settings, User, Globe, Twitter, Disc3, Instagram, Key, Bell, Shield,
@@ -39,6 +40,30 @@ export default function SettingsPage() {
 
   const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
+  // Fetch existing profile data when wallet is connected
+  React.useEffect(() => {
+    const fetchProfile = async () => {
+      if (!address) return;
+      try {
+        const res = await fetch(`${backendUrl}/api/v1/profile/${address}`);
+        if (res.ok) {
+          const data = await res.json();
+          setProfileForm({
+            displayName: data.displayName || "",
+            bio: data.bio || "",
+            website: data.website || "",
+            twitter: data.twitter || "",
+            discord: data.discord || "",
+            instagram: data.instagram || "",
+          });
+        }
+      } catch (e) {
+        console.error("Failed to fetch profile:", e);
+      }
+    };
+    fetchProfile();
+  }, [address, backendUrl]);
+
   const handleSaveProfile = async () => {
     if (!address) {
       toastError("Wallet not connected", "Connect your wallet to save profile.");
@@ -46,9 +71,13 @@ export default function SettingsPage() {
     }
     setSaving(true);
     try {
+      const token = localStorage.getItem("wcos_auth_token");
       const res = await fetch(`${backendUrl}/api/v1/profile/${address}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token && { Authorization: `Bearer ${token}` })
+        },
         body: JSON.stringify(profileForm),
       });
       if (res.ok) {
@@ -84,12 +113,13 @@ export default function SettingsPage() {
             <Settings className="h-4 w-4 text-slate-400" /> Creator Settings
           </h1>
         </div>
-        <ConnectButton showBalance={false} chainStatus="icon" />
+        <SafeWalletButton showBalance={false} />
       </header>
 
-      <div className="max-w-4xl mx-auto flex gap-6 p-6">
-
-        {/* Sidebar Tabs */}
+      <div className="max-w-4xl mx-auto p-6">
+        <WalletGuard requiredFeature="Settings Console">
+          <div className="flex gap-6 w-full">
+            {/* Sidebar Tabs */}
         <aside className="w-52 space-y-1 flex-shrink-0">
           {TABS.map((tab) => (
             <button
@@ -278,6 +308,8 @@ export default function SettingsPage() {
           )}
 
         </div>
+      </div>
+        </WalletGuard>
       </div>
     </div>
   );

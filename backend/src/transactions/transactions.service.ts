@@ -5,6 +5,7 @@ export interface CreateTxDto {
   walletAddress?: string;
   txHash: string;
   network: string;
+  chainId?: number;
   type: 'MINT' | 'LIST' | 'BUY' | 'SWAP' | 'DEPLOY' | 'STAKE';
   status?: string;
   details?: Record<string, any>;
@@ -14,6 +15,7 @@ export interface TxRecord {
   id: string;
   txHash: string;
   network: string;
+  chainId: number;
   type: string;
   status: string;
   details: Record<string, any> | null;
@@ -51,6 +53,7 @@ export class TransactionsService {
         create: {
           txHash: dto.txHash,
           network: dto.network,
+          chainId: dto.chainId ?? 84532,
           type: dto.type,
           status: dto.status ?? 'CONFIRMED',
           details: detailsStr,
@@ -58,6 +61,7 @@ export class TransactionsService {
         },
         update: {
           status: dto.status ?? 'CONFIRMED',
+          chainId: dto.chainId ?? 84532,
           details: detailsStr,
         },
       }),
@@ -69,6 +73,7 @@ export class TransactionsService {
         id: `mem-${Date.now()}`,
         txHash: dto.txHash,
         network: dto.network,
+        chainId: dto.chainId ?? 84532,
         type: dto.type,
         status: dto.status ?? 'CONFIRMED',
         details: dto.details ?? null,

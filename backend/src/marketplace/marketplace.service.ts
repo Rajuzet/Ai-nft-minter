@@ -9,6 +9,7 @@ export interface ListingRecord {
   price: string;
   collectionName: string;
   chain: string;
+  chainId?: number;
   imageUrl: string;
   name: string;
   description: string;
@@ -30,6 +31,7 @@ export class MarketplaceService {
     price: '0.05',
     collectionName: 'AI Studio Collective',
     chain: 'base-sepolia',
+    chainId: 84532,
     imageUrl: 'https://api.dicebear.com/7.x/shapes/svg?seed=MarketItem1',
     name: 'Neo Cyber Wanderer #001',
     description: 'First edition visual asset listed on WCOS Foundation.',
@@ -56,6 +58,7 @@ export class MarketplaceService {
       price: l.price,
       collectionName: l.collectionName,
       chain: l.chain,
+      chainId: l.chainId,
       imageUrl: l.imageUrl,
       name: l.name,
       description: l.description,
@@ -90,6 +93,13 @@ export class MarketplaceService {
         price: dto.price,
         collectionName: dto.collectionName,
         chain: dto.chain || 'base-sepolia',
+        chainId: dto.chainId ?? (
+          dto.chain === 'base-mainnet' ? 8453 :
+          dto.chain === 'ethereum' ? 1 :
+          dto.chain === 'polygon' ? 137 :
+          dto.chain === 'arbitrum' ? 42161 :
+          dto.chain === 'optimism' ? 10 : 84532
+        ),
         imageUrl: dto.imageUrl,
         name: dto.name,
         description: dto.description,
@@ -105,6 +115,7 @@ export class MarketplaceService {
       price: created.price,
       collectionName: created.collectionName,
       chain: created.chain,
+      chainId: created.chainId,
       imageUrl: created.imageUrl,
       name: created.name,
       description: created.description,

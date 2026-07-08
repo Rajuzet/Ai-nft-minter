@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount } from "wagmi";
+import { SafeWalletButton } from "../../../components/ui/SafeWalletButton";
+import { useAccount, useChainId } from "wagmi";
+import { getExplorerTxUrl } from "../../../lib/contracts";
 import {
   Globe, Twitter, Disc3, Instagram, Copy, CheckCircle2,
   Sparkles, BarChart2, Users, Award, Package, DollarSign,
-  ChevronRight, Activity, Shield, ExternalLink, Loader2, Edit3
+  ChevronRight, Activity, Shield, ExternalLink, Loader2, Edit3, Wallet
 } from "lucide-react";
 
 interface CreatorProfile {
@@ -41,6 +42,7 @@ interface CreatorProfile {
     description: string;
     timestamp: string;
     txHash?: string;
+    chainId?: number;
   }>;
 }
 
@@ -57,6 +59,7 @@ const activityLabels: Record<string, string> = {
 
 export default function CreatorProfilePage({ params }: { params: Promise<{ address: string }> }) {
   const { address: connectedAddress } = useAccount();
+  const walletChainId = useChainId();
   const [profile, setProfile] = useState<CreatorProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -67,6 +70,10 @@ export default function CreatorProfilePage({ params }: { params: Promise<{ addre
 
   useEffect(() => {
     const fetchProfile = async () => {
+      if (profileAddress === "0x0000000000000000000000000000000000000000") {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const res = await fetch(`${backendUrl}/api/v1/profile/${profileAddress}`);
@@ -85,6 +92,23 @@ export default function CreatorProfilePage({ params }: { params: Promise<{ addre
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  if (profileAddress === "0x0000000000000000000000000000000000000000") {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center space-y-4">
+        <div className="h-16 w-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+          <Wallet className="h-8 w-8" />
+        </div>
+        <div className="space-y-1.5 max-w-sm">
+          <h2 className="text-xl font-bold text-white">Wallet Not Connected</h2>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Please connect your Web3 wallet to view or configure your personal creator profile page.
+          </p>
+        </div>
+        <SafeWalletButton showBalance={false} />
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -123,7 +147,7 @@ export default function CreatorProfilePage({ params }: { params: Promise<{ addre
               <Edit3 className="h-3 w-3" /> Edit Profile
             </button>
           )}
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
@@ -252,7 +276,7 @@ export default function CreatorProfilePage({ params }: { params: Promise<{ addre
                     <p className="text-[9px] text-slate-600 font-mono">{act.timestamp}</p>
                   </div>
                   {act.txHash && (
-                    <a href={`https://sepolia.basescan.org/tx/${act.txHash}`} target="_blank" rel="noreferrer"
+                    <a href={getExplorerTxUrl(act.chainId || walletChainId || 84532, act.txHash)} target="_blank" rel="noreferrer"
                       className="text-slate-600 hover:text-cyan-400 transition flex-shrink-0">
                       <ExternalLink className="h-3 w-3" />
                     </a>

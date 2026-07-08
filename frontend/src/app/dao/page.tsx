@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { SafeWalletButton } from "../../components/ui/SafeWalletButton";
+import { WalletGuard } from "../../components/ui/WalletGuard";
+import { ChainSelector } from "../../components/ui/ChainSelector";
 import { useAccount } from "wagmi";
 import {
   Users, Wallet, Compass, Coins, Layers, Sparkles, FileText, ShoppingBag, 
@@ -69,18 +71,8 @@ export default function DaoListPage() {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1 bg-slate-900 border border-white/10 p-1.5 rounded-full text-xs">
-            <Globe className="h-3.5 w-3.5 text-teal-400 ml-1.5" />
-            <select
-              value={selectedChain}
-              onChange={(e) => setSelectedChain(e.target.value)}
-              className="bg-transparent text-white text-[11px] font-bold outline-none pr-2 cursor-pointer"
-            >
-              <option value="base-sepolia" className="bg-slate-950">Base Sepolia</option>
-              <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
-            </select>
-          </div>
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <ChainSelector />
+          <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
@@ -132,7 +124,8 @@ export default function DaoListPage() {
 
         {/* Central DAO registries */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <WalletGuard requiredFeature="DAO Governance">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
                 <Users className="h-6 w-6 text-teal-400" /> DAO Governance Center
@@ -193,7 +186,7 @@ export default function DaoListPage() {
               ))}
             </div>
           )}
-
+          </WalletGuard>
         </main>
       </div>
 

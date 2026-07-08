@@ -13,12 +13,29 @@ export const checkWalletHealth = (): WalletHealthReport => {
   const rpcEndpoints: Record<number, string> = {};
 
   supportedChains.forEach((chain) => {
-    const transportUrl =
-      chain.id === 84532
-        ? process.env.NEXT_PUBLIC_RPC_URL ||
-          process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ||
-          "https://sepolia.base.org"
-        : process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org";
+    let transportUrl = "";
+    switch (chain.id) {
+      case 84532:
+        transportUrl = process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+        break;
+      case 8453:
+        transportUrl = process.env.NEXT_PUBLIC_BASE_MAINNET_RPC_URL || "https://mainnet.base.org";
+        break;
+      case 1:
+        transportUrl = process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || "https://eth.llamarpc.com";
+        break;
+      case 137:
+        transportUrl = process.env.NEXT_PUBLIC_POLYGON_RPC_URL || "https://polygon.llamarpc.com";
+        break;
+      case 42161:
+        transportUrl = process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL || "https://arbitrum.llamarpc.com";
+        break;
+      case 10:
+        transportUrl = process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL || "https://optimism.llamarpc.com";
+        break;
+      default:
+        transportUrl = "https://sepolia.base.org";
+    }
     rpcEndpoints[chain.id] = transportUrl;
   });
 

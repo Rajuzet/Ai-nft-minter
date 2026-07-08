@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount } from "wagmi";
+import { SafeWalletButton } from "../../../components/ui/SafeWalletButton";
+import { WalletGuard } from "../../../components/ui/WalletGuard";
+import { ChainSelector } from "../../../components/ui/ChainSelector";
+import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import {
   Coins, Wallet, Compass, Users, Layers, Sparkles, FileText, ShoppingBag, 
   ChevronRight, Activity, Cpu, RefreshCw, CheckCircle2, X, AlertTriangle, 
@@ -10,16 +12,56 @@ import {
 } from "lucide-react";
 import { useChainGuard } from "../../../lib/useChainGuard";
 import { useWeb3Transaction, getTxStatusLabel, parseContractError } from "../../../lib/useWeb3Transaction";
-import { CONTRACT_ADDRESSES, WcosStakingABI, isPlaceholderAddress } from "../../../lib/contracts";
+import { CONTRACT_ADDRESSES, WcosStakingABI, isPlaceholderAddress, useContractAddresses, getExplorerTxUrl } from "../../../lib/contracts";
 import { parseUnits } from "viem";
 import { baseSepolia } from "wagmi/chains";
 
 export default function DefiStakingPage() {
   const { address, isConnected } = useAccount();
+  const contractAddresses = useContractAddresses();
   const [activeModule] = useState("staking");
   const [selectedChain, setSelectedChain] = useState("base-sepolia");
 
-  const chainGuard = useChainGuard(baseSepolia.id);
+  // Chain mapping helpers
+  const chainMap = React.useMemo(() => ({
+    "base-sepolia": 84532,
+    "base-mainnet": 8453,
+    "ethereum": 1,
+    "polygon": 137,
+    "arbitrum": 42161,
+    "optimism": 10,
+  } as Record<string, number>), []);
+
+  const chainIdToKey = React.useCallback((id: number): string => {
+    return Object.keys(chainMap).find((key) => chainMap[key] === id) || "base-sepolia";
+  }, [chainMap]);
+
+  const activeChainId = chainMap[selectedChain] || 84532;
+  const chainGuard = useChainGuard(activeChainId);
+  const walletChainId = useChainId();
+  const { switchChain } = useSwitchChain();
+
+  // Sync dropdown with active wallet chain
+  useEffect(() => {
+    if (isConnected && walletChainId) {
+      const isSupported = Object.values(chainMap).includes(walletChainId);
+      if (isSupported) {
+        const key = chainIdToKey(walletChainId);
+        if (selectedChain !== key) {
+          setSelectedChain(key);
+        }
+      }
+    }
+  }, [walletChainId, isConnected, chainMap, chainIdToKey, selectedChain]);
+
+  // Handle dropdown change and switch wallet network
+  const handleChainChange = (val: string) => {
+    setSelectedChain(val);
+    const targetId = chainMap[val];
+    if (isConnected && targetId && switchChain) {
+      switchChain({ chainId: targetId });
+    }
+  };
 
   const [stakeAmount, setStakeAmount] = useState("100");
   const [lockDuration, setLockDuration] = useState("90");
@@ -63,17 +105,15 @@ export default function DefiStakingPage() {
   const executeStake = () => {
     setIsConfirming(false);
 
-    if (isPlaceholderAddress(CONTRACT_ADDRESSES.WcosStaking)) {
-      // [DEV_MODE] Staking contract not deployed — simulate locally
-      setStakedBalance((prev) => (parseFloat(prev) + parseFloat(stakeAmount)).toFixed(4));
-      setAccruedRewards("0.00");
+    if (isPlaceholderAddress(contractAddresses.WcosStaking)) {
+      console.error("Staking contract is not configured on this network.");
       return;
     }
 
     // Real on-chain stake call
     // Amount in WGT tokens (18 decimals assumed)
     stakeTx.execute({
-      address: CONTRACT_ADDRESSES.WcosStaking,
+      address: contractAddresses.WcosStaking,
       abi: WcosStakingABI,
       functionName: "stake",
       args: [parseUnits(stakeAmount, 18)],
@@ -81,14 +121,13 @@ export default function DefiStakingPage() {
   };
 
   const handleClaim = () => {
-    if (isPlaceholderAddress(CONTRACT_ADDRESSES.WcosStaking)) {
-      // [DEV_MODE] simulate reward claim
-      setAccruedRewards("0");
+    if (isPlaceholderAddress(contractAddresses.WcosStaking)) {
+      console.error("Staking contract is not configured on this network.");
       return;
     }
 
     claimTx.execute({
-      address: CONTRACT_ADDRESSES.WcosStaking,
+      address: contractAddresses.WcosStaking,
       abi: WcosStakingABI,
       functionName: "claimRewards",
       args: [],
@@ -121,18 +160,8 @@ export default function DefiStakingPage() {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1 bg-slate-900 border border-white/10 p-1.5 rounded-full text-xs">
-            <Globe className="h-3.5 w-3.5 text-indigo-400 ml-1.5" />
-            <select
-              value={selectedChain}
-              onChange={(e) => setSelectedChain(e.target.value)}
-              className="bg-transparent text-white text-[11px] font-bold outline-none pr-2 cursor-pointer"
-            >
-              <option value="base-sepolia" className="bg-slate-950">Base Sepolia</option>
-              <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
-            </select>
-          </div>
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <ChainSelector />
+          <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
@@ -194,7 +223,8 @@ export default function DefiStakingPage() {
 
         {/* Central staking builder */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
-          <div>
+          <WalletGuard requiredFeature="DeFi Staking Module">
+            <div>
             <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
               <Layers className="h-6 w-6 text-amber-400" /> Staking Center
             </h2>
@@ -206,6 +236,17 @@ export default function DefiStakingPage() {
             {/* Stake Input Panel */}
             <div className="space-y-5 rounded-3xl border border-white/5 bg-slate-900/20 p-6">
               
+              {/* Staking contract status */}
+              {isPlaceholderAddress(contractAddresses.WcosStaking) && (
+                <div className="rounded-2xl border border-rose-500/25 bg-rose-500/5 p-3.5 flex items-center gap-2 text-[11px] text-rose-400 animate-pulse">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                  <span>
+                    Staking contract is not configured on the selected network ({chainGuard.requiredChainName}). 
+                    Smart contract interactions are disabled.
+                  </span>
+                </div>
+              )}
+
               {/* Risk warning */}
               <div className="rounded-2xl bg-amber-500/5 border border-amber-500/25 p-3.5 text-amber-400 flex items-start gap-2.5 text-xs">
                 <AlertTriangle className="h-5 w-5 mt-0.5 flex-shrink-0" />
@@ -332,7 +373,7 @@ export default function DefiStakingPage() {
                 {stakeTx.state.status === "confirmed" && txHash && (
                   <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-400 text-[11px]">
                     <div className="flex items-center gap-1.5 font-bold mb-1"><CheckCircle2 className="h-4 w-4" /> Staking Confirmed!</div>
-                    <a href={`https://sepolia.basescan.org/tx/${txHash}`} target="_blank" rel="noreferrer" className="font-mono text-[9px] underline truncate block">{txHash}</a>
+                    <a href={getExplorerTxUrl(walletChainId, txHash)} target="_blank" rel="noreferrer" className="font-mono text-[9px] underline truncate block">{txHash}</a>
                   </div>
                 )}
                 {stakeTx.state.status === "failed" && (
@@ -350,6 +391,7 @@ export default function DefiStakingPage() {
             </div>
 
           </div>
+          </WalletGuard>
         </main>
       </div>
 

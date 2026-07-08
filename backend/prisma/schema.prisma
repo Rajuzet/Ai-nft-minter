@@ -117,10 +117,15 @@ model Nft {
   tokenId         Int
   ownerAddress    String
   minterAddress   String?
+  creatorAddress  String?
   tokenUri        String?
   name            String?
   description     String?
   imageUrl        String?
+  attributes      String?              // stored as JSON string
+  prompt          String?
+  aiModel         String?
+  status          String               @default("MINTED") // PENDING, MINTED, FAILED
   chainId         Int                  @default(84532)
   blockNumber     Int                  @default(0)
   txHash          String               @default("")
@@ -164,6 +169,7 @@ model MarketplaceListing {
   price          String
   collectionName String
   chain          String         @default("base-sepolia")
+  chainId        Int            @default(84532)
   imageUrl       String
   name           String
   description    String
@@ -203,6 +209,7 @@ model DaoOrganization {
   quorum          Int           @default(10)
   duration        Int           @default(5760)
   treasuryAddress String
+  chainId         Int           @default(84532)
   createdAt       DateTime      @default(now())
   proposals       DaoProposal[]
 }
@@ -218,6 +225,7 @@ model DaoProposal {
   forVotes         Int             @default(0)
   againstVotes     Int             @default(0)
   status           String          @default("ACTIVE")
+  chainId          Int             @default(84532)
   createdAt        DateTime        @default(now())
   dao              DaoOrganization @relation(fields: [daoId], references: [id], onDelete: Cascade)
   proposer         User            @relation(fields: [proposerId], references: [id], onDelete: Cascade)
@@ -256,6 +264,7 @@ model TransactionRecord {
   userId    String?
   txHash    String   @unique
   network   String
+  chainId   Int      @default(84532)
   type      String
   status    String   @default("CONFIRMED")
   details   String? // stored as JSON string

@@ -12,7 +12,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiResponse, ApiConsumes, ApiProperty } from '@nestjs/swagger';
 import { StorageService, NFTTrait } from './storage.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { IsNotEmpty, IsString, IsOptional, IsArray } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsArray, IsNumber } from 'class-validator';
 
 export class UploadMetadataDto {
   @ApiProperty({ description: 'NFT title / name', example: 'Cyberpunk Warrior #001' })
@@ -44,6 +44,36 @@ export class UploadMetadataDto {
   @IsString()
   @IsOptional()
   walletAddress?: string;
+
+  @ApiProperty({ description: 'Animation URL (optional)', required: false })
+  @IsString()
+  @IsOptional()
+  animation_url?: string;
+
+  @ApiProperty({ description: 'Creator Wallet Address', required: false })
+  @IsString()
+  @IsOptional()
+  creatorAddress?: string;
+
+  @ApiProperty({ description: 'AI Model / Tool used', required: false })
+  @IsString()
+  @IsOptional()
+  aiModel?: string;
+
+  @ApiProperty({ description: 'Prompt used for generation', required: false })
+  @IsString()
+  @IsOptional()
+  prompt?: string;
+
+  @ApiProperty({ description: 'Style or Category', required: false })
+  @IsString()
+  @IsOptional()
+  styleCategory?: string;
+
+  @ApiProperty({ description: 'Chain ID', required: false })
+  @IsNumber()
+  @IsOptional()
+  chainId?: number;
 }
 
 const ALLOWED_MIME_TYPES = [
@@ -172,6 +202,12 @@ export class IpfsController {
     @Body('attributes') attributesJson?: string,
     @Body('externalUrl') externalUrl?: string,
     @Body('walletAddress') walletAddress?: string,
+    @Body('animation_url') animation_url?: string,
+    @Body('creatorAddress') creatorAddress?: string,
+    @Body('aiModel') aiModel?: string,
+    @Body('prompt') prompt?: string,
+    @Body('styleCategory') styleCategory?: string,
+    @Body('chainId') chainId?: string,
   ) {
     if (!file) {
       throw new BadRequestException('Image file is required.');
@@ -209,12 +245,22 @@ export class IpfsController {
     }
 
     // 3. Create metadata JSON
+    const extraFields: Record<string, any> = {};
+    if (animation_url) extraFields.animation_url = animation_url;
+    if (creatorAddress) extraFields.creator = creatorAddress;
+    if (aiModel) extraFields.ai_model = aiModel;
+    if (prompt) extraFields.prompt = prompt;
+    if (styleCategory) extraFields.style_category = styleCategory;
+    if (chainId) extraFields.chain_id = parseInt(chainId, 10);
+    extraFields.timestamp = new Date().toISOString();
+
     const metadata = this.storageService.createNFTMetadata(
       name,
       description,
       imageRes.ipfsUrl,
       attributes,
       externalUrl,
+      extraFields
     );
 
     // 4. Upload metadata to IPFS

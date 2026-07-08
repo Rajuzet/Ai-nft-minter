@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { SafeWalletButton } from "../../components/ui/SafeWalletButton";
+import { WalletGuard } from "../../components/ui/WalletGuard";
 import { useAccount } from "wagmi";
 import {
   Coins, Wallet, Compass, Users, Layers, Sparkles, FileText, ShoppingBag, 
@@ -76,7 +77,7 @@ export default function DefiPortfolioPage() {
               <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
             </select>
           </div>
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
@@ -138,7 +139,8 @@ export default function DefiPortfolioPage() {
 
         {/* Central panel */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <WalletGuard requiredFeature="DeFi Portfolio Overview">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h2 className="text-2xl font-bold tracking-tight text-white">Portfolio Overview</h2>
               <p className="text-slate-400 text-xs mt-1">Consolidated holdings, multi-chain balances, and yields audit.</p>
@@ -261,7 +263,7 @@ export default function DefiPortfolioPage() {
               <p className="text-xs mt-0.5">Please check network connection or connect your active web3 wallet.</p>
             </div>
           )}
-
+          </WalletGuard>
         </main>
       </div>
 

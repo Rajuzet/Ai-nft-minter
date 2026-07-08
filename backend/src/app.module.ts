@@ -14,6 +14,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { ProfileModule } from './profile/profile.module';
 import { IndexerModule } from './indexer/indexer.module';
 import { NewsModule } from './news/news.module';
+import { NftModule } from './nft/nft.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { NewsModule } from './news/news.module';
     ProfileModule,
     IndexerModule,
     NewsModule,
+    NftModule,
   ],
   controllers: [],
   providers: [],

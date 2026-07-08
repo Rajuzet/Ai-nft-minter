@@ -11,6 +11,7 @@ export interface DaoRecord {
   quorum: number;
   duration: number;
   treasuryAddress: string;
+  chainId?: number;
   members: string[];
   timestamp: string;
 }
@@ -25,6 +26,7 @@ export interface ProposalRecord {
   forVotes: number;
   againstVotes: number;
   status: 'ACTIVE' | 'DEFEATED' | 'SUCCEEDED' | 'EXECUTED';
+  chainId?: number;
   startBlock: number;
   endBlock: number;
   timestamp: string;
@@ -44,6 +46,7 @@ export class DaoService {
     quorum: 10,
     duration: 5760,
     treasuryAddress: '0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc',
+    chainId: 84532,
     members: [
       '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
       '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
@@ -61,6 +64,7 @@ export class DaoService {
     forVotes: 52000,
     againstVotes: 12000,
     status: 'ACTIVE',
+    chainId: 84532,
     startBlock: 245670,
     endBlock: 251430,
     timestamp: new Date().toISOString(),
@@ -86,6 +90,7 @@ export class DaoService {
       quorum: d.quorum,
       duration: d.duration,
       treasuryAddress: d.treasuryAddress,
+      chainId: d.chainId,
       members: ['0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'],
       timestamp: d.createdAt.toISOString(),
     }));
@@ -110,6 +115,7 @@ export class DaoService {
       quorum: d.quorum,
       duration: d.duration,
       treasuryAddress: d.treasuryAddress,
+      chainId: d.chainId,
       members: ['0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'],
       timestamp: d.createdAt.toISOString(),
     };
@@ -126,6 +132,7 @@ export class DaoService {
         quorum: dto.quorum || 10,
         duration: dto.duration || 5760,
         treasuryAddress: dto.treasuryAddress || '0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc',
+        chainId: dto.chainId ?? 84532,
       },
     });
 
@@ -139,6 +146,7 @@ export class DaoService {
       quorum: created.quorum,
       duration: created.duration,
       treasuryAddress: created.treasuryAddress,
+      chainId: created.chainId,
       members: ['0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'],
       timestamp: created.createdAt.toISOString(),
     };
@@ -162,6 +170,7 @@ export class DaoService {
       forVotes: p.forVotes,
       againstVotes: p.againstVotes,
       status: p.status as any,
+      chainId: p.chainId,
       startBlock: 245670,
       endBlock: 251430,
       timestamp: p.createdAt.toISOString(),
@@ -191,6 +200,7 @@ export class DaoService {
         targetAddress: dto.targetAddress,
         valueTransferred: dto.valueTransferred || '0',
         status: 'ACTIVE',
+        chainId: dto.chainId ?? 84532,
       },
     });
 
@@ -204,6 +214,7 @@ export class DaoService {
       forVotes: created.forVotes,
       againstVotes: created.againstVotes,
       status: 'ACTIVE',
+      chainId: created.chainId,
       startBlock: 250000,
       endBlock: 255760,
       timestamp: created.createdAt.toISOString(),

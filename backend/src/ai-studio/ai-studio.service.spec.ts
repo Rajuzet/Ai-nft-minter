@@ -9,6 +9,22 @@ describe('AiStudioService', () => {
   const mockStorageService = {
     uploadImage: jest.fn().mockResolvedValue({ url: 'https://storage.example.com/art.png' }),
     uploadMetadata: jest.fn().mockResolvedValue({ url: 'https://storage.example.com/metadata.json' }),
+    uploadImageToIPFS: jest.fn().mockResolvedValue({
+      ipfsHash: 'QmHash123',
+      ipfsUrl: 'ipfs://QmHash123',
+      gatewayUrl: 'https://gateway.pinata.cloud/ipfs/QmHash123',
+    }),
+    createNFTMetadata: jest.fn().mockReturnValue({
+      name: 'Cyberpunk Art',
+      description: 'Glow lights',
+      image: 'ipfs://QmHash123',
+      attributes: [],
+    }),
+    uploadMetadataToIPFS: jest.fn().mockResolvedValue({
+      ipfsHash: 'QmMetaHash123',
+      ipfsUrl: 'ipfs://QmMetaHash123',
+      gatewayUrl: 'https://gateway.pinata.cloud/ipfs/QmMetaHash123',
+    }),
   };
 
   const mockPrismaService = {
@@ -43,15 +59,16 @@ describe('AiStudioService', () => {
   });
 
   it('should generate artwork and return image and metadata URLs', async () => {
-    const result = await service.generateArtwork({
-      prompt: 'Cyberpunk futuristic city neon lights',
-      stylePreset: 'cyberpunk',
-      walletAddress: '0x1234567890123456789012345678901234567890',
-    });
+    const result = await service.generateArt(
+      'Cyberpunk futuristic city neon lights',
+      'ipfs',
+      { name: 'Cyberpunk Art', description: 'Glow lights', category: 'cyberpunk' },
+      '0x1234567890123456789012345678901234567890'
+    );
 
     expect(result).toBeDefined();
     expect(result.imageUrl).toBeDefined();
     expect(result.metadataUrl).toBeDefined();
-    expect(result.prompt).toBe('Cyberpunk futuristic city neon lights');
+    expect(result.metadata.name).toBe('Cyberpunk Art');
   });
 });

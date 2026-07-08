@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { SafeWalletButton } from "../../components/ui/SafeWalletButton";
+import { WalletGuard } from "../../components/ui/WalletGuard";
 import { useAccount } from "wagmi";
 import {
   BarChart2, TrendingUp, DollarSign, Cpu, ChevronRight, RefreshCw,
@@ -119,7 +120,7 @@ export default function AnalyticsDashboardPage() {
               <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
             </select>
           </div>
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
@@ -150,6 +151,7 @@ export default function AnalyticsDashboardPage() {
 
         {/* Main content */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
+          <WalletGuard requiredFeature="Creator Intelligence Dashboard">
 
           {/* Page title + refresh */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -301,7 +303,7 @@ export default function AnalyticsDashboardPage() {
               <p className="text-xs mt-0.5">Connect your wallet or check backend connection.</p>
             </div>
           )}
-
+          </WalletGuard>
         </main>
       </div>
     </div>

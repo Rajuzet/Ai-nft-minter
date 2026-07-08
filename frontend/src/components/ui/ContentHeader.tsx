@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { SafeWalletButton } from "./SafeWalletButton";
 import { Sparkles, BookOpen, FileText, Newspaper, Compass, ChevronRight, Menu, X, Rocket } from "lucide-react";
 
 interface ContentHeaderProps {
@@ -79,7 +79,7 @@ export function ContentHeader({ activePage }: ContentHeaderProps) {
           </button>
 
           <div className="scale-90 origin-right">
-            <ConnectButton showBalance={false} chainStatus="icon" />
+            <SafeWalletButton showBalance={false} />
           </div>
 
           <button
