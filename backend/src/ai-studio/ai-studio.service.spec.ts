@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AiStudioService } from './ai-studio.service';
 import { StorageService } from '../storage/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { OpenAiProvider } from './providers/openai.provider';
 
 describe('AiStudioService', () => {
   let service: AiStudioService;
@@ -39,6 +40,7 @@ describe('AiStudioService', () => {
         imageUrl: 'https://storage.example.com/art.png',
         metadataUrl: 'https://storage.example.com/metadata.json',
       }),
+      update: jest.fn().mockResolvedValue({ id: 'asset-1' }),
     },
   };
 
@@ -48,6 +50,7 @@ describe('AiStudioService', () => {
         AiStudioService,
         { provide: StorageService, useValue: mockStorageService },
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: OpenAiProvider, useValue: { enhancePrompt: jest.fn(), generateImage: jest.fn() } },
       ],
     }).compile();
 
@@ -58,17 +61,16 @@ describe('AiStudioService', () => {
     expect(service).toBeDefined();
   });
 
-  it('should generate artwork and return image and metadata URLs', async () => {
+  it('should generate artwork in the background and return asset details', async () => {
     const result = await service.generateArt(
-      'Cyberpunk futuristic city neon lights',
-      'ipfs',
+      { prompt: 'Cyberpunk futuristic city neon lights' },
       { name: 'Cyberpunk Art', description: 'Glow lights', category: 'cyberpunk' },
       '0x1234567890123456789012345678901234567890'
     );
 
     expect(result).toBeDefined();
-    expect(result.imageUrl).toBeDefined();
-    expect(result.metadataUrl).toBeDefined();
-    expect(result.metadata.name).toBe('Cyberpunk Art');
+    expect(result.success).toBe(true);
+    expect(result.assetId).toBeDefined();
+    expect(result.status).toBe('QUEUED');
   });
 });

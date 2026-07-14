@@ -210,15 +210,14 @@ export const WcosMarketplaceABI = [
       { name: "tokenId", type: "uint256" },
       { name: "price", type: "uint256" },
     ],
-    outputs: [],
+    outputs: [{ name: "listingId", type: "uint256" }],
   },
   {
     type: "function",
     name: "buyToken",
     stateMutability: "payable",
     inputs: [
-      { name: "nftAddress", type: "address" },
-      { name: "tokenId", type: "uint256" },
+      { name: "listingId", type: "uint256" },
     ],
     outputs: [],
   },
@@ -227,8 +226,7 @@ export const WcosMarketplaceABI = [
     name: "cancelListing",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "nftAddress", type: "address" },
-      { name: "tokenId", type: "uint256" },
+      { name: "listingId", type: "uint256" },
     ],
     outputs: [],
   },
@@ -246,6 +244,16 @@ export const WcosStakingABI = [
   },
   {
     type: "function",
+    name: "stake",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amount", type: "uint256" },
+      { name: "lockDuration", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "withdraw",
     stateMutability: "nonpayable",
     inputs: [{ name: "amount", type: "uint256" }],
@@ -258,9 +266,49 @@ export const WcosStakingABI = [
     inputs: [],
     outputs: [],
   },
+  {
+    type: "function",
+    name: "emergencyWithdraw",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "balances",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "earned",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "unlockTimes",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "lockDurations",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "stakeTimes",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
 ] as const;
-
-// ─── ERC-20 approve ABI (for staking token approval) ─────────────────────────
 
 export const ERC20ApproveABI = [
   {
@@ -284,3 +332,330 @@ export const ERC20ApproveABI = [
     outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
+
+// ─── WcosGovernanceToken ABI ──────────────────────────────────────────────────
+
+export const WcosGovernanceTokenABI = [
+  {
+    type: "function",
+    name: "name",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
+  },
+  {
+    type: "function",
+    name: "symbol",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint8" }],
+  },
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "delegates",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "numCheckpoints",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ name: "", type: "uint32" }],
+  },
+  {
+    type: "function",
+    name: "getPastVotes",
+    stateMutability: "view",
+    inputs: [
+      { name: "account", type: "address" },
+      { name: "blockNumber", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "delegate",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "delegatee", type: "address" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "mint",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "DelegateChanged",
+    inputs: [
+      { indexed: true, name: "delegator", type: "address" },
+      { indexed: true, name: "fromDelegate", type: "address" },
+      { indexed: true, name: "toDelegate", type: "address" },
+    ],
+  },
+  {
+    type: "event",
+    name: "DelegateVotesChanged",
+    inputs: [
+      { indexed: true, name: "delegate", type: "address" },
+      { indexed: false, name: "previousBalance", type: "uint256" },
+      { indexed: false, name: "newBalance", type: "uint256" },
+    ],
+  },
+] as const;
+
+// ─── WcosGovernor ABI ─────────────────────────────────────────────────────────
+
+export const WcosGovernorABI = [
+  {
+    type: "function",
+    name: "token",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "proposalCount",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "quorumPercentage",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "votingDurationBlocks",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "proposals",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "uint256" }],
+    outputs: [
+      { name: "proposer", type: "address" },
+      { name: "target", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "data", type: "bytes" },
+      { name: "description", type: "string" },
+      { name: "startBlock", type: "uint256" },
+      { name: "endBlock", type: "uint256" },
+      { name: "forVotes", type: "uint256" },
+      { name: "againstVotes", type: "uint256" },
+      { name: "executed", type: "bool" },
+      { name: "canceled", type: "bool" },
+    ],
+  },
+  {
+    type: "function",
+    name: "hasVoted",
+    stateMutability: "view",
+    inputs: [
+      { name: "", type: "uint256" },
+      { name: "", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "state",
+    stateMutability: "view",
+    inputs: [{ name: "proposalId", type: "uint256" }],
+    outputs: [{ name: "", type: "uint8" }],
+  },
+  {
+    type: "function",
+    name: "proposalVotes",
+    stateMutability: "view",
+    inputs: [{ name: "proposalId", type: "uint256" }],
+    outputs: [
+      { name: "forVotes", type: "uint256" },
+      { name: "againstVotes", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "proposalProposer",
+    stateMutability: "view",
+    inputs: [{ name: "proposalId", type: "uint256" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "propose",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "target", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "data", type: "bytes" },
+      { name: "description", type: "string" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "castVote",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "proposalId", type: "uint256" },
+      { name: "support", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "execute",
+    stateMutability: "payable",
+    inputs: [{ name: "proposalId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "cancel",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "proposalId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "ProposalCreated",
+    inputs: [
+      { indexed: true, name: "proposalId", type: "uint256" },
+      { indexed: true, name: "proposer", type: "address" },
+      { indexed: false, name: "target", type: "address" },
+      { indexed: false, name: "value", type: "uint256" },
+      { indexed: false, name: "description", type: "string" },
+      { indexed: false, name: "startBlock", type: "uint256" },
+      { indexed: false, name: "endBlock", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "VoteCast",
+    inputs: [
+      { indexed: true, name: "voter", type: "address" },
+      { indexed: true, name: "proposalId", type: "uint256" },
+      { indexed: false, name: "support", type: "bool" },
+      { indexed: false, name: "weight", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "ProposalExecuted",
+    inputs: [{ indexed: true, name: "proposalId", type: "uint256" }],
+  },
+  {
+    type: "event",
+    name: "ProposalCanceled",
+    inputs: [{ indexed: true, name: "proposalId", type: "uint256" }],
+  },
+] as const;
+
+// ─── WcosTreasury ABI ─────────────────────────────────────────────────────────
+
+export const WcosTreasuryABI = [
+  {
+    type: "function",
+    name: "governor",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "owner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "setGovernor",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_newGovernor", type: "address" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "executeRelease",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "recipient", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "executeTokenRelease",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "recipient", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "FundsReleased",
+    inputs: [
+      { indexed: true, name: "recipient", type: "address" },
+      { indexed: false, name: "amount", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "TokenReleased",
+    inputs: [
+      { indexed: true, name: "token", type: "address" },
+      { indexed: true, name: "recipient", type: "address" },
+      { indexed: false, name: "amount", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "GovernorUpdated",
+    inputs: [
+      { indexed: true, name: "previousGovernor", type: "address" },
+      { indexed: true, name: "newGovernor", type: "address" },
+    ],
+  },
+] as const;
+

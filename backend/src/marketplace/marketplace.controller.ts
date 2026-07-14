@@ -4,78 +4,88 @@ import { MarketplaceService, ListingRecord } from './marketplace.service';
 import { IsNotEmpty, IsString, IsNumber, IsOptional } from 'class-validator';
 
 class CreateListingDto {
-  @ApiProperty({ description: 'NFT Smart Contract Address', example: '0x...' })
+  @ApiProperty({ description: 'NFT Smart Contract Address' })
   @IsString()
   @IsNotEmpty()
   nftAddress: string;
 
-  @ApiProperty({ description: 'Token ID of listed NFT', example: 1 })
+  @ApiProperty({ description: 'Token ID' })
   @IsNumber()
   tokenId: number;
 
-  @ApiProperty({ description: 'Seller wallet address', example: '0x...' })
+  @ApiProperty({ description: 'Seller wallet address' })
   @IsString()
   @IsNotEmpty()
   seller: string;
 
-  @ApiProperty({ description: 'Price in Ether', example: '0.1' })
+  @ApiProperty({ description: 'Price in Ether' })
   @IsString()
   @IsNotEmpty()
   price: string;
 
-  @ApiProperty({ description: 'Collection Name', example: 'Neo Wanderers' })
+  @ApiProperty({ description: 'Collection Name' })
   @IsString()
   @IsNotEmpty()
   collectionName: string;
 
-  @ApiProperty({ description: 'Chain Name', example: 'base-sepolia' })
+  @ApiProperty({ description: 'Chain Name' })
   @IsString()
   @IsNotEmpty()
   chain: string;
 
-  @ApiProperty({ description: 'Numeric Chain ID', required: false, example: 84532 })
+  @ApiProperty({ description: 'Numeric Chain ID', required: false })
   @IsNumber()
   @IsOptional()
   chainId?: number;
 
-  @ApiProperty({ description: 'NFT Image URL', example: 'https://image.png' })
+  @ApiProperty({ description: 'NFT Image URL' })
   @IsString()
   @IsNotEmpty()
   imageUrl: string;
 
-  @ApiProperty({ description: 'NFT Item Name', example: 'Cyberpunk Visor #04' })
+  @ApiProperty({ description: 'NFT Item Name' })
   @IsString()
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({ description: 'NFT Item Description', example: 'A futuristic visor.' })
+  @ApiProperty({ description: 'NFT Item Description' })
   @IsString()
   @IsNotEmpty()
   description: string;
+
+  @ApiProperty({ description: 'Transaction Hash for Listing creation' })
+  @IsString()
+  @IsNotEmpty()
+  txHash: string;
 }
 
 class BuyListingDto {
-  @ApiProperty({ description: 'Listing identifier ID', example: 'list-123' })
+  @ApiProperty({ description: 'Listing ID (UUID from DB)' })
   @IsString()
   @IsNotEmpty()
   id: string;
 
-  @ApiProperty({ description: 'Buyer wallet address', example: '0x...' })
+  @ApiProperty({ description: 'Buyer wallet address' })
   @IsString()
   @IsNotEmpty()
   buyer: string;
 
-  @ApiProperty({ description: 'On-chain transaction hash', example: '0x...' })
+  @ApiProperty({ description: 'Transaction Hash for Purchase' })
   @IsString()
   @IsNotEmpty()
   txHash: string;
 }
 
 class CancelListingDto {
-  @ApiProperty({ description: 'Listing identifier ID', example: 'list-123' })
+  @ApiProperty({ description: 'Listing ID' })
   @IsString()
   @IsNotEmpty()
   id: string;
+
+  @ApiProperty({ description: 'Transaction Hash for Cancellation' })
+  @IsString()
+  @IsNotEmpty()
+  txHash: string;
 }
 
 @ApiTags('Marketplace')
@@ -85,32 +95,28 @@ export class MarketplaceController {
 
   @Get('listings')
   @ApiOperation({ summary: 'List all active marketplace listings' })
-  @ApiResponse({ status: 200, description: 'Success' })
   findAll() {
     return this.marketplaceService.findAll();
   }
 
   @Post('list')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'List an NFT for fixed price' })
-  @ApiResponse({ status: 201, description: 'Success' })
+  @ApiOperation({ summary: 'Create a pending listing and verify on-chain' })
   create(@Body() dto: CreateListingDto) {
     return this.marketplaceService.create(dto);
   }
 
   @Post('buy')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Purchase a listed NFT' })
-  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiOperation({ summary: 'Mark an NFT as bought and verify on-chain' })
   buy(@Body() dto: BuyListingDto) {
     return this.marketplaceService.buy(dto.id, dto.buyer, dto.txHash);
   }
 
   @Post('cancel')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Cancel an active NFT listing' })
-  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiOperation({ summary: 'Mark a listing as cancelled and verify on-chain' })
   cancel(@Body() dto: CancelListingDto) {
-    return this.marketplaceService.cancel(dto.id);
+    return this.marketplaceService.cancel(dto.id, dto.txHash);
   }
 }

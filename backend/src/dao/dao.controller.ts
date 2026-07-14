@@ -1,150 +1,161 @@
-import { Controller, Get, Post, Body, Param, HttpCode, HttpStatus, UseGuards, Req } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiProperty, ApiHeader } from '@nestjs/swagger';
-import { DaoService, DaoRecord, ProposalRecord } from './dao.service';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { IsNotEmpty, IsString, IsNumber, IsBoolean, IsOptional } from 'class-validator';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Query,
+  HttpCode,
+  HttpStatus,
+  ParseIntPipe,
+  DefaultValuePipe,
+  BadRequestException,
+} from '@nestjs/common';
+import {
+  DaoService,
+  RegisterProposalDto,
+  ConfirmProposalDto,
+  RegisterVoteDto,
+  ConfirmVoteDto,
+  RegisterDelegationDto,
+} from './dao.service';
 
-class CreateDaoDto {
-  @ApiProperty({ description: 'DAO Community Name', example: 'Core DAO' })
-  @IsString()
-  @IsNotEmpty()
-  name: string;
-
-  @ApiProperty({ description: 'DAO Purpose description', example: 'Managing treasury assets.' })
-  @IsString()
-  @IsNotEmpty()
-  description: string;
-
-  @ApiProperty({ description: 'DAO Governance Type', example: 'Token-weighted' })
-  @IsString()
-  @IsNotEmpty()
-  govType: string;
-
-  @ApiProperty({ description: 'Voting Token name or standard symbol', example: 'WGT' })
-  @IsString()
-  @IsNotEmpty()
-  votingToken: string;
-
-  @ApiProperty({ description: 'Minimum votes threshold required to propose', example: 100 })
-  @IsNumber()
-  threshold: number;
-
-  @ApiProperty({ description: 'Quorum percentage requirement', example: 10 })
-  @IsNumber()
-  quorum: number;
-
-  @ApiProperty({ description: 'Voting duration limit in blocks', example: 5760 })
-  @IsNumber()
-  duration: number;
-
-  @ApiProperty({ description: 'Treasury wallet destination address', example: '0x...' })
-  @IsString()
-  @IsNotEmpty()
-  treasuryAddress: string;
-
-  @ApiProperty({ description: 'Numeric chain ID', required: false, example: 84532 })
-  @IsNumber()
-  @IsOptional()
-  chainId?: number;
-}
-
-class CreateProposalDto {
-  @ApiProperty({ description: 'Proposal Title', example: 'Adjust Royalty Rate' })
-  @IsString()
-  @IsNotEmpty()
-  title: string;
-
-  @ApiProperty({ description: 'Proposal details', example: 'Change royalties to 3%' })
-  @IsString()
-  @IsNotEmpty()
-  description: string;
-
-  @ApiProperty({ description: 'Contract execution destination address', example: '0x...' })
-  @IsString()
-  @IsNotEmpty()
-  targetAddress: string;
-
-  @ApiProperty({ description: 'Value to transfer in Wei', example: '0' })
-  @IsString()
-  @IsNotEmpty()
-  valueTransferred: string;
-
-  @ApiProperty({ description: 'Numeric chain ID', required: false, example: 84532 })
-  @IsNumber()
-  @IsOptional()
-  chainId?: number;
-}
-
-class CastVoteDto {
-  @ApiProperty({ description: 'Voter wallet address', example: '0x...' })
-  @IsString()
-  @IsNotEmpty()
-  voter: string;
-
-  @ApiProperty({ description: 'Support vote option', example: true })
-  @IsBoolean()
-  support: boolean;
-
-  @ApiProperty({ description: 'Vote weight', example: 100 })
-  @IsNumber()
-  weight: number;
-}
-
-@ApiTags('DAO Builder')
-@Controller('api/v1/daos')
+@Controller('api/v1/governance')
 export class DaoController {
   constructor(private readonly daoService: DaoService) {}
 
-  @Get()
-  @ApiOperation({ summary: 'List all registered creator DAOs' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  findAll() {
-    return this.daoService.findAll();
+  // ─── Governance Config ────────────────────────────────────────────────────
+
+  @Get('config/:chainId')
+  getGovernanceConfig(@Param('chainId', ParseIntPipe) chainId: number) {
+    return this.daoService.getGovernanceConfig(chainId);
   }
 
-  @Get('my-activity')
-  @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get authenticated user DAO proposals and votes' })
-  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
-  getMyActivity(@Req() req: any) {
-    return this.daoService.getUserActivity(req.user.walletAddress);
+  // ─── Proposals ────────────────────────────────────────────────────────────
+
+  @Get('proposals')
+  getProposals(
+    @Query('chainId') chainId?: string,
+    @Query('status') status?: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
+  ) {
+    if (limit > 100) limit = 100;
+    return this.daoService.getProposals(
+      chainId ? parseInt(chainId, 10) : undefined,
+      status,
+      page,
+      limit,
+    );
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get details of a specific DAO governance profile' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  findOne(@Param('id') id: string) {
-    return this.daoService.findOne(id);
+  @Get('proposals/:proposalId')
+  getProposal(@Param('proposalId') proposalId: string, @Query('chainId') chainId?: string) {
+    // If chainId provided, treat as on-chain lookup; otherwise treat as DB ID
+    if (chainId && /^\d+$/.test(proposalId)) {
+      return this.daoService.getProposalByOnChainId(proposalId, parseInt(chainId, 10));
+    }
+    return this.daoService.getProposalByDbId(proposalId);
   }
 
-  @Post()
+  @Post('proposals/register')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new DAO governance organization' })
-  @ApiResponse({ status: 201, description: 'Success' })
-  create(@Body() dto: CreateDaoDto) {
-    return this.daoService.create(dto);
+  registerProposal(@Body() dto: RegisterProposalDto) {
+    if (!dto.walletAddress || !dto.creationTransactionHash || !dto.onChainProposalId) {
+      throw new BadRequestException('walletAddress, creationTransactionHash, and onChainProposalId are required');
+    }
+    return this.daoService.registerProposal(dto);
   }
 
-  @Get(':id/proposals')
-  @ApiOperation({ summary: 'List active and completed proposals for a DAO' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  findProposals(@Param('id') id: string) {
-    return this.daoService.findProposals(id);
-  }
-
-  @Post(':id/proposals')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new governance vote proposal' })
-  @ApiResponse({ status: 201, description: 'Success' })
-  createProposal(@Param('id') id: string, @Body() dto: CreateProposalDto) {
-    return this.daoService.createProposal(id, dto);
-  }
-
-  @Post('proposals/:propId/vote')
+  @Patch('proposals/confirm')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Cast support/against votes on a proposal' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  castVote(@Param('propId') propId: string, @Body() dto: CastVoteDto) {
-    return this.daoService.castVote(propId, dto.voter, dto.support, dto.weight);
+  confirmProposal(@Body() dto: ConfirmProposalDto) {
+    if (!dto.creationTransactionHash) {
+      throw new BadRequestException('creationTransactionHash is required');
+    }
+    return this.daoService.confirmProposal(dto);
+  }
+
+  @Patch('proposals/state')
+  @HttpCode(HttpStatus.OK)
+  updateProposalState(
+    @Body() body: {
+      onChainProposalId: string;
+      chainId: number;
+      status: string;
+      forVotes?: string;
+      againstVotes?: string;
+      executionTransactionHash?: string;
+      cancellationTransactionHash?: string;
+    },
+  ) {
+    if (!body.onChainProposalId || !body.chainId || !body.status) {
+      throw new BadRequestException('onChainProposalId, chainId, and status are required');
+    }
+    return this.daoService.updateProposalState(
+      body.onChainProposalId,
+      body.chainId,
+      body.status,
+      {
+        forVotes: body.forVotes,
+        againstVotes: body.againstVotes,
+        executionTransactionHash: body.executionTransactionHash,
+        cancellationTransactionHash: body.cancellationTransactionHash,
+      },
+    );
+  }
+
+  // ─── Votes ────────────────────────────────────────────────────────────────
+
+  @Post('votes/register')
+  @HttpCode(HttpStatus.CREATED)
+  registerVote(@Body() dto: RegisterVoteDto) {
+    if (!dto.walletAddress || !dto.transactionHash || !dto.onChainProposalId) {
+      throw new BadRequestException('walletAddress, transactionHash, and onChainProposalId are required');
+    }
+    if (dto.support === undefined || dto.support === null) {
+      throw new BadRequestException('support (boolean) is required');
+    }
+    return this.daoService.registerVote(dto);
+  }
+
+  @Patch('votes/confirm')
+  @HttpCode(HttpStatus.OK)
+  confirmVote(@Body() dto: ConfirmVoteDto) {
+    if (!dto.transactionHash) {
+      throw new BadRequestException('transactionHash is required');
+    }
+    return this.daoService.confirmVote(dto);
+  }
+
+  // ─── Delegations ──────────────────────────────────────────────────────────
+
+  @Post('delegations/register')
+  @HttpCode(HttpStatus.CREATED)
+  registerDelegation(@Body() dto: RegisterDelegationDto) {
+    if (!dto.walletAddress || !dto.delegateAddress || !dto.transactionHash) {
+      throw new BadRequestException('walletAddress, delegateAddress, and transactionHash are required');
+    }
+    return this.daoService.registerDelegation(dto);
+  }
+
+  // ─── User History ─────────────────────────────────────────────────────────
+
+  @Get('wallet/:address/history')
+  getWalletHistory(@Param('address') address: string) {
+    if (!address || !address.startsWith('0x')) {
+      throw new BadRequestException('Invalid wallet address');
+    }
+    return this.daoService.getWalletGovernanceHistory(address);
+  }
+
+  // ─── Analytics ────────────────────────────────────────────────────────────
+
+  @Get('analytics')
+  getAnalytics(@Query('chainId') chainId?: string) {
+    return this.daoService.getGovernanceAnalytics(
+      chainId ? parseInt(chainId, 10) : undefined,
+    );
   }
 }

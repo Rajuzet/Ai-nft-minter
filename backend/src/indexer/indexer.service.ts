@@ -2,6 +2,64 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import * as dotenv from 'dotenv';
 import * as crypto from 'crypto';
+import { decodeEventLog } from 'viem';
+
+const WcosGovernorABI = [
+  {
+    type: 'event',
+    name: 'ProposalCreated',
+    inputs: [
+      { indexed: true, name: 'proposalId', type: 'uint256' },
+      { indexed: true, name: 'proposer', type: 'address' },
+      { indexed: false, name: 'target', type: 'address' },
+      { indexed: false, name: 'value', type: 'uint256' },
+      { indexed: false, name: 'description', type: 'string' },
+      { indexed: false, name: 'startBlock', type: 'uint256' },
+      { indexed: false, name: 'endBlock', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'VoteCast',
+    inputs: [
+      { indexed: true, name: 'voter', type: 'address' },
+      { indexed: true, name: 'proposalId', type: 'uint256' },
+      { indexed: false, name: 'support', type: 'bool' },
+      { indexed: false, name: 'weight', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'ProposalExecuted',
+    inputs: [{ indexed: true, name: 'proposalId', type: 'uint256' }],
+  },
+  {
+    type: 'event',
+    name: 'ProposalCanceled',
+    inputs: [{ indexed: true, name: 'proposalId', type: 'uint256' }],
+  },
+] as const;
+
+const WcosGovernanceTokenABI = [
+  {
+    type: 'event',
+    name: 'DelegateChanged',
+    inputs: [
+      { indexed: true, name: 'delegator', type: 'address' },
+      { indexed: true, name: 'fromDelegate', type: 'address' },
+      { indexed: true, name: 'toDelegate', type: 'address' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'DelegateVotesChanged',
+    inputs: [
+      { indexed: true, name: 'delegate', type: 'address' },
+      { indexed: false, name: 'previousBalance', type: 'uint256' },
+      { indexed: false, name: 'newBalance', type: 'uint256' },
+    ],
+  },
+] as const;
 
 dotenv.config();
 
@@ -65,9 +123,11 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
 
   private readonly network = process.env.CHAIN_NAME || 'base-sepolia';
   private readonly rpcUrl = process.env.RPC_URL || 'https://sepolia.base.org';
+  private readonly chainId = parseInt(process.env.CHAIN_ID || '84532', 10);
   private readonly nftContract = process.env.NFT_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || '0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A';
   private readonly marketplaceContract = process.env.MARKETPLACE_CONTRACT_ADDRESS || '0x0000000000000000000000000000000000000000';
-  private readonly daoContract = process.env.DAO_CONTRACT_ADDRESS || '0x0000000000000000000000000000000000000000';
+  private readonly daoContract = process.env.DAO_CONTRACT_ADDRESS || process.env.GOVERNOR_ADDRESS || '0x0000000000000000000000000000000000000000';
+  private readonly tokenContract = process.env.GOVERNANCE_TOKEN_ADDRESS || '0x0000000000000000000000000000000000000000';
   private readonly defaultStartBlock = parseInt(process.env.INDEXER_START_BLOCK || '18000000', 10);
 
   constructor(private readonly prisma: PrismaService) {}
@@ -221,6 +281,9 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
       if (this.daoContract && this.daoContract !== '0x0000000000000000000000000000000000000000') {
         targetAddresses.push(this.daoContract.toLowerCase());
       }
+      if (this.tokenContract && this.tokenContract !== '0x0000000000000000000000000000000000000000') {
+        targetAddresses.push(this.tokenContract.toLowerCase());
+      }
 
       if (targetAddresses.length === 0) {
         this.logger.warn('No active contract addresses configured for indexing.');
@@ -269,7 +332,7 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
   /**
    * Process individual log event with duplicate protection & entity updates
    */
-  private async processLog(log: any): Promise<boolean> {
+  async processLog(log: any): Promise<boolean> {
     const txHash = log.transactionHash;
     const logIndex = parseInt(log.logIndex, 16);
     const blockNumber = parseInt(log.blockNumber, 16);
@@ -388,15 +451,231 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
         where: { nftAddress, tokenId, status: 'ACTIVE' },
         data: { status: 'CANCELLED', txHash },
       });
-    } else if (topic0 === TOPICS.ProposalCreated) {
-      eventName = 'ProposalCreated';
-      dataJson = JSON.stringify({ rawData: log.data });
-    } else if (topic0 === TOPICS.VoteCast) {
-      eventName = 'VoteCast';
-      dataJson = JSON.stringify({ rawData: log.data });
-    } else if (topic0 === TOPICS.ProposalExecuted) {
-      eventName = 'ProposalExecuted';
-      dataJson = JSON.stringify({ rawData: log.data });
+    } else {
+      let decodedGovEvent = null;
+      try {
+        decodedGovEvent = decodeEventLog({
+          abi: [...WcosGovernorABI, ...WcosGovernanceTokenABI],
+          data: log.data,
+          topics: log.topics,
+        });
+      } catch {
+        // Not a governance event
+      }
+
+      if (decodedGovEvent) {
+        eventName = decodedGovEvent.eventName;
+        const args = decodedGovEvent.args as any;
+
+        if (eventName === 'ProposalCreated') {
+          const onChainProposalId = args.proposalId.toString();
+          const proposer = args.proposer.toLowerCase();
+          const target = args.target.toLowerCase();
+          const value = args.value.toString();
+          const description = args.description;
+          const startBlock = args.startBlock.toString();
+          const endBlock = args.endBlock.toString();
+
+          dataJson = JSON.stringify({ onChainProposalId, proposer, target, value, description, startBlock, endBlock });
+
+          let user = await this.prisma.user.findUnique({
+            where: { walletAddress: proposer },
+          });
+          if (!user) {
+            user = await this.prisma.user.create({
+              data: { walletAddress: proposer },
+            });
+          }
+
+          let dao = await this.prisma.daoOrganization.findFirst({
+            where: { chainId: this.chainId },
+          });
+          if (!dao) {
+            dao = await this.prisma.daoOrganization.create({
+              data: {
+                name: 'WCOS DAO Governance',
+                description: 'On-chain governance for the WCOS protocol',
+                govType: 'Token-weighted',
+                votingToken: 'WGT',
+                threshold: 1,
+                quorum: 10,
+                duration: 100,
+                treasuryAddress: '0x0000000000000000000000000000000000000000',
+                chainId: this.chainId,
+              },
+            });
+          }
+
+          const existingProp = await this.prisma.daoProposal.findFirst({
+            where: {
+              OR: [
+                { proposalId: onChainProposalId, chainId: this.chainId },
+                { creationTransactionHash: txHash },
+              ]
+            }
+          });
+
+          if (existingProp) {
+            await this.prisma.daoProposal.update({
+              where: { id: existingProp.id },
+              data: {
+                proposalId: onChainProposalId,
+                snapshotBlock: startBlock,
+                deadlineBlock: endBlock,
+                status: 'ACTIVE',
+                governorContract: contractAddress,
+              }
+            });
+          } else {
+            const title = description.split('\n')[0].slice(0, 100) || 'On-chain Proposal';
+            await this.prisma.daoProposal.create({
+              data: {
+                daoId: dao.id,
+                proposerId: user.id,
+                proposalId: onChainProposalId,
+                title,
+                summary: title,
+                description,
+                targetAddress: target,
+                valueTransferred: value,
+                snapshotBlock: startBlock,
+                deadlineBlock: endBlock,
+                status: 'ACTIVE',
+                chainId: this.chainId,
+                creationTransactionHash: txHash,
+                governorContract: contractAddress,
+              }
+            });
+          }
+        } else if (eventName === 'VoteCast') {
+          const voter = args.voter.toLowerCase();
+          const onChainProposalId = args.proposalId.toString();
+          const support = args.support;
+          const weight = args.weight.toString();
+
+          dataJson = JSON.stringify({ voter, onChainProposalId, support, weight });
+
+          const proposal = await this.prisma.daoProposal.findFirst({
+            where: { proposalId: onChainProposalId, chainId: this.chainId },
+          });
+
+          if (proposal) {
+            let user = await this.prisma.user.findUnique({
+              where: { walletAddress: voter },
+            });
+            if (!user) {
+              user = await this.prisma.user.create({
+                data: { walletAddress: voter },
+              });
+            }
+
+            await this.prisma.daoVote.upsert({
+              where: {
+                proposalId_voterId: {
+                  proposalId: proposal.id,
+                  voterId: user.id,
+                }
+              },
+              update: {
+                weight,
+                support,
+                transactionHash: txHash,
+                blockNumber,
+                status: 'CONFIRMED',
+              },
+              create: {
+                proposalId: proposal.id,
+                voterId: user.id,
+                chainId: this.chainId,
+                support,
+                weight,
+                transactionHash: txHash,
+                blockNumber,
+                status: 'CONFIRMED',
+              }
+            });
+
+            const allVotes = await this.prisma.daoVote.findMany({
+              where: { proposalId: proposal.id, status: 'CONFIRMED' },
+            });
+            const forVotes = allVotes
+              .filter(v => v.support)
+              .reduce((acc, v) => acc + BigInt(v.weight), BigInt(0))
+              .toString();
+            const againstVotes = allVotes
+              .filter(v => !v.support)
+              .reduce((acc, v) => acc + BigInt(v.weight), BigInt(0))
+              .toString();
+
+            await this.prisma.daoProposal.update({
+              where: { id: proposal.id },
+              data: { forVotes, againstVotes },
+            });
+          }
+        } else if (eventName === 'ProposalExecuted') {
+          const onChainProposalId = args.proposalId.toString();
+          dataJson = JSON.stringify({ onChainProposalId });
+
+          const proposal = await this.prisma.daoProposal.findFirst({
+            where: { proposalId: onChainProposalId, chainId: this.chainId },
+          });
+          if (proposal) {
+            await this.prisma.daoProposal.update({
+              where: { id: proposal.id },
+              data: {
+                status: 'EXECUTED',
+                executionTransactionHash: txHash,
+              }
+            });
+          }
+        } else if (eventName === 'ProposalCanceled') {
+          const onChainProposalId = args.proposalId.toString();
+          dataJson = JSON.stringify({ onChainProposalId });
+
+          const proposal = await this.prisma.daoProposal.findFirst({
+            where: { proposalId: onChainProposalId, chainId: this.chainId },
+          });
+          if (proposal) {
+            await this.prisma.daoProposal.update({
+              where: { id: proposal.id },
+              data: {
+                status: 'CANCELED',
+                cancellationTransactionHash: txHash,
+              }
+            });
+          }
+        } else if (eventName === 'DelegateChanged') {
+          const delegator = args.delegator.toLowerCase();
+          const toDelegate = args.toDelegate.toLowerCase();
+          dataJson = JSON.stringify({ delegator, toDelegate });
+
+          await this.prisma.governanceDelegation.create({
+            data: {
+              walletAddress: delegator,
+              delegateAddress: toDelegate,
+              chainId: this.chainId,
+              votingPower: '0',
+              transactionHash: txHash,
+              blockNumber,
+            }
+          });
+        } else if (eventName === 'DelegateVotesChanged') {
+          const delegatee = args.delegate.toLowerCase();
+          const newBalance = args.newBalance.toString();
+          dataJson = JSON.stringify({ delegatee, newBalance });
+
+          const latestDelegation = await this.prisma.governanceDelegation.findFirst({
+            where: { delegateAddress: delegatee, chainId: this.chainId },
+            orderBy: { createdAt: 'desc' },
+          });
+          if (latestDelegation) {
+            await this.prisma.governanceDelegation.update({
+              where: { id: latestDelegation.id },
+              data: { votingPower: newBalance },
+            });
+          }
+        }
+      }
     }
 
     // Save ChainEvent log record for audit & duplicate protection

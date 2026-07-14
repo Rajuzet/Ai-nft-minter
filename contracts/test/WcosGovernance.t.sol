@@ -1,19 +1,25 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
 import "forge-std/Test.sol";
 import "../src/WcosGovernanceToken.sol";
 import "../src/WcosGovernor.sol";
+import "../src/WcosTreasury.sol";
 import "../src/WcosStaking.sol";
 
 contract WcosGovernanceTest is Test {
     WcosGovernanceToken public token;
     WcosGovernor public governor;
+    WcosTreasury public treasury;
     WcosStaking public staking;
 
-    address public owner = address(1);
-    address public memberA = address(2);
-    address public memberB = address(3);
+    address public owner = address(0x1111);
+    address public memberA = address(0x2222);
+    address public memberB = address(0x3333);
+    address public recipient = address(0x4444);
+
+    uint256 constant QUORUM_PERCENT = 10;
+    uint256 constant VOTING_DURATION = 100;
 
     function setUp() public {
         vm.deal(owner, 100 ether);
@@ -21,54 +27,244 @@ contract WcosGovernanceTest is Test {
         vm.deal(memberB, 100 ether);
 
         vm.startPrank(owner);
-        token = new WcosGovernanceToken("WCOS Governance", "WGT", 1000000 * 10**18);
-        governor = new WcosGovernor(token, 10, 100); // 10% quorum, 100 blocks duration
+        token = new WcosGovernanceToken("WCOS Governance", "WGT", 1_000_000 * 10 ** 18);
+        governor = new WcosGovernor(token, QUORUM_PERCENT, VOTING_DURATION);
+        treasury = new WcosTreasury(address(governor));
         staking = new WcosStaking(address(token), address(token), 1);
-        
-        // Fund staking contract with rewards
-        token.transfer(address(staking), 50000 * 10**18);
-        
-        // Distribute governance tokens
-        token.transfer(memberA, 1000 * 10**18);
-        token.transfer(memberB, 1000 * 10**18);
+
+        token.transfer(address(staking), 50_000 * 10 ** 18);
+        token.transfer(memberA, 100_000 * 10 ** 18);
+        token.transfer(memberB, 100_000 * 10 ** 18);
+        payable(address(treasury)).transfer(10 ether);
         vm.stopPrank();
     }
 
-    function testCheckpoints() public {
+    function testTokenBasicInfo() public {
+        assertEq(token.name(), "WCOS Governance");
+        assertEq(token.symbol(), "WGT");
+        assertEq(token.decimals(), 18);
+        assertGt(token.totalSupply(), 0);
+    }
+
+    function testDelegateAndCheckpoints() public {
         vm.startPrank(memberA);
-        // Delegate to self to create checkpoints
         token.delegate(memberA);
-        assertEq(token.getPastVotes(memberA, block.number - 1), 1000 * 10**18);
+        vm.roll(block.number + 1);
+        uint256 votes = token.getPastVotes(memberA, block.number - 1);
+        assertEq(votes, 100_000 * 10 ** 18);
         vm.stopPrank();
     }
 
-    function testProposalState() public {
+    function testDelegateToAnother() public {
         vm.startPrank(memberA);
-        token.delegate(memberA);
+        token.delegate(memberB);
+        vm.roll(block.number + 1);
+        uint256 bVotes = token.getPastVotes(memberB, block.number - 1);
+        assertEq(bVotes, 100_000 * 10 ** 18);
+        uint256 aVotes = token.getPastVotes(memberA, block.number - 1);
+        assertEq(aVotes, 0);
+        vm.stopPrank();
+    }
 
-        uint256 proposalId = governor.propose(
-            address(0),
-            0,
-            "",
-            "Upgrade visual modules proposal"
-        );
-
-        // Verify state is Active
+    function testProposalStateActive() public {
+        vm.startPrank(memberA);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Test proposal");
+        vm.roll(block.number + 50);
         assertEq(uint256(governor.state(proposalId)), uint256(WcosGovernor.ProposalState.Active));
+        vm.stopPrank();
+    }
+
+    function testProposalDefeatedByQuorum() public {
+        vm.startPrank(memberA);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Quorum failure");
+        vm.roll(block.number + VOTING_DURATION + 1);
+        assertEq(uint256(governor.state(proposalId)), uint256(WcosGovernor.ProposalState.Defeated));
+        vm.stopPrank();
+    }
+
+    function testProposalSucceeded() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Winning proposal");
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+
+        vm.startPrank(memberB);
+        token.delegate(memberB);
+        vm.roll(block.number + 1);
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+
+        vm.roll(block.number + VOTING_DURATION + 1);
+        assertEq(uint256(governor.state(proposalId)), uint256(WcosGovernor.ProposalState.Succeeded));
+    }
+
+    function testCastVoteFor() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Vote test");
+        governor.castVote(proposalId, true);
+        assertTrue(governor.hasVoted(proposalId, memberA));
+        (uint256 forVotes,) = governor.proposalVotes(proposalId);
+        assertGt(forVotes, 0);
+        vm.stopPrank();
+    }
+
+    function testDuplicateVoteReverts() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Dup vote test");
+        governor.castVote(proposalId, true);
+        vm.expectRevert("WcosGovernor: already voted");
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+    }
+
+    function testVoteAfterPeriodReverts() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Late vote test");
+        vm.roll(block.number + VOTING_DURATION + 1);
+        vm.expectRevert("WcosGovernor: voting closed");
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+    }
+
+    function testProposerCanCancel() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Cancel test");
+        governor.cancel(proposalId);
+        assertEq(uint256(governor.state(proposalId)), uint256(WcosGovernor.ProposalState.Canceled));
+        vm.stopPrank();
+    }
+
+    function testNonProposerCancelReverts() public {
+        vm.startPrank(memberA);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Cancel auth test");
+        vm.stopPrank();
+
+        vm.startPrank(memberB);
+        vm.expectRevert("WcosGovernor: only proposer can cancel");
+        governor.cancel(proposalId);
+        vm.stopPrank();
+    }
+
+    function testVoteOnCanceledReverts() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Cancel vote test");
+        governor.cancel(proposalId);
+        vm.expectRevert("WcosGovernor: proposal canceled");
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+    }
+
+    function testExecuteInformationalProposal() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Informational proposal");
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+
+        vm.startPrank(memberB);
+        token.delegate(memberB);
+        vm.roll(block.number + 1);
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+
+        vm.roll(block.number + VOTING_DURATION + 1);
+        governor.execute(proposalId);
+        assertEq(uint256(governor.state(proposalId)), uint256(WcosGovernor.ProposalState.Executed));
+    }
+
+    function testDuplicateExecuteReverts() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Dup execute test");
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+
+        vm.startPrank(memberB);
+        token.delegate(memberB);
+        vm.roll(block.number + 1);
+        governor.castVote(proposalId, true);
+        vm.stopPrank();
+
+        vm.roll(block.number + VOTING_DURATION + 1);
+        governor.execute(proposalId);
+
+        vm.expectRevert("WcosGovernor: already executed");
+        governor.execute(proposalId);
+    }
+
+    function testExecuteBeforeVotingEndsReverts() public {
+        vm.startPrank(memberA);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Early execute test");
+        vm.expectRevert("WcosGovernor: voting still active");
+        governor.execute(proposalId);
+        vm.stopPrank();
+    }
+
+    function testQuorumNotMetReverts() public {
+        vm.startPrank(memberA);
+        uint256 proposalId = governor.propose(address(0), 0, "", "No quorum test");
+        vm.stopPrank();
+        vm.roll(block.number + VOTING_DURATION + 1);
+        vm.expectRevert("WcosGovernor: quorum not met");
+        governor.execute(proposalId);
+    }
+
+    function testTreasuryOwnerCanRelease() public {
+        vm.startPrank(owner);
+        uint256 beforeBalance = recipient.balance;
+        treasury.executeRelease(payable(recipient), 1 ether);
+        assertEq(recipient.balance, beforeBalance + 1 ether);
+        vm.stopPrank();
+    }
+
+    function testTreasuryUnauthorizedReverts() public {
+        vm.startPrank(memberA);
+        vm.expectRevert("WcosTreasury: caller is not authorized");
+        treasury.executeRelease(payable(recipient), 1 ether);
         vm.stopPrank();
     }
 
     function testStakeAndWithdraw() public {
         vm.startPrank(memberB);
-        token.approve(address(staking), 500 * 10**18);
-        
-        // Stake tokens
-        staking.stake(500 * 10**18);
-        assertEq(staking.balances(memberB), 500 * 10**18);
+        token.approve(address(staking), 500 * 10 ** 18);
+        staking.stake(500 * 10 ** 18);
+        assertEq(staking.balances(memberB), 500 * 10 ** 18);
+        assertEq(staking.lockDurations(memberB), 30);
+        assertEq(staking.unlockTimes(memberB), block.timestamp + 30 days);
+        vm.warp(block.timestamp + 10 days);
+        vm.expectRevert("WcosStaking: tokens are locked");
+        staking.withdraw(200 * 10 ** 18);
+        vm.warp(block.timestamp + 21 days);
+        staking.withdraw(200 * 10 ** 18);
+        assertEq(staking.balances(memberB), 300 * 10 ** 18);
+        vm.stopPrank();
+    }
 
-        // Withdraw tokens
-        staking.withdraw(200 * 10**18);
-        assertEq(staking.balances(memberB), 300 * 10**18);
+    function testEmergencyWithdraw() public {
+        vm.startPrank(memberB);
+        token.approve(address(staking), 500 * 10 ** 18);
+        staking.stake(500 * 10 ** 18, 365);
+        vm.warp(block.timestamp + 100 days);
+        vm.expectRevert("WcosStaking: tokens are locked");
+        staking.withdraw(500 * 10 ** 18);
+        uint256 balanceBefore = token.balanceOf(memberB);
+        staking.emergencyWithdraw();
+        assertEq(staking.balances(memberB), 0);
+        assertEq(token.balanceOf(memberB), balanceBefore + 500 * 10 ** 18);
         vm.stopPrank();
     }
 }

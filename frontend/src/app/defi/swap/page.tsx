@@ -1,32 +1,95 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import {
-  ERC20ApproveABI,
-  isPlaceholderAddress,
-  getExplorerTxUrl,
-} from "../../../lib/contracts";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { SafeWalletButton } from "../../../components/ui/SafeWalletButton";
 import { WalletGuard } from "../../../components/ui/WalletGuard";
-import { ChainSelector } from "../../../components/ui/ChainSelector";
-import { useAccount, useChainId, useSwitchChain, useSendTransaction, useWaitForTransactionReceipt } from "wagmi";
-import { parseEther, encodeFunctionData } from "viem";
+import { useAccount, useChainId, useSwitchChain, useSendTransaction, useWaitForTransactionReceipt, useReadContract, useWriteContract, useBalance } from "wagmi";
+import { parseUnits, formatUnits, parseAbiItem } from "viem";
 import {
-  Coins, Wallet, Compass, Users, Layers, Sparkles, FileText, ShoppingBag, 
-  ChevronRight, Activity, Cpu, ArrowUpRight, TrendingUp, DollarSign, 
-  HelpCircle, RefreshCw, Eye, ShieldAlert, Globe, ArrowDown, Settings, 
-  AlertTriangle, CheckCircle2, X
+  Coins, Wallet, Compass, Layers, RefreshCw, Eye, EyeOff, ShieldAlert,
+  Globe, Info, DollarSign, TrendingUp, TrendingDown, EyeIcon, Award,
+  ArrowUpRight, ArrowDownLeft, Landmark, FileText, ChevronRight, Cpu,
+  Settings, ArrowDown, AlertTriangle, CheckCircle2, X
 } from "lucide-react";
 import { useChainGuard } from "../../../lib/useChainGuard";
-import { parseContractError, getTxStatusLabel } from "../../../lib/useWeb3Transaction";
-import { baseSepolia } from "wagmi/chains";
+import { parseContractError } from "../../../lib/useWeb3Transaction";
+import { getExplorerTxUrl } from "../../../lib/contracts";
+
+interface Token {
+  symbol: string;
+  name: string;
+  address: string;
+  decimals: number;
+}
+
+const WGT_ADDRESS = process.env.NEXT_PUBLIC_NFT_CONTRACT_ADDRESS || "0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A";
+
+const TOKEN_REGISTRY: Record<number, Token[]> = {
+  84532: [ // Base Sepolia
+    { symbol: "ETH", name: "Ethereum", address: "NATIVE", decimals: 18 },
+    { symbol: "WGT", name: "WCOS Governance Token", address: WGT_ADDRESS, decimals: 18 },
+    { symbol: "USDC", name: "USD Coin", address: "0x036cbd53842c5426634e7929541ec2318f3dcf7e", decimals: 6 },
+  ],
+  8453: [ // Base Mainnet
+    { symbol: "ETH", name: "Ethereum", address: "NATIVE", decimals: 18 },
+    { symbol: "USDC", name: "USD Coin", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6 },
+    { symbol: "DEGEN", name: "Degen", address: "0x4ed4e11a221506294411143a852641b17ac2f307", decimals: 18 },
+  ],
+  1: [ // Ethereum Mainnet
+    { symbol: "ETH", name: "Ethereum", address: "NATIVE", decimals: 18 },
+    { symbol: "USDC", name: "USD Coin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", decimals: 6 },
+    { symbol: "USDT", name: "Tether USD", address: "0xdac17f958d2ee523a2206206994597c13d831ec7", decimals: 6 },
+  ],
+  137: [ // Polygon
+    { symbol: "POL", name: "Polygon Ecosystem Token", address: "NATIVE", decimals: 18 },
+    { symbol: "USDC", name: "USD Coin", address: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", decimals: 6 },
+  ],
+  42161: [ // Arbitrum
+    { symbol: "ETH", name: "Ethereum", address: "NATIVE", decimals: 18 },
+    { symbol: "USDC", name: "USD Coin", address: "0xaf88d065e77cc8cc2239327c5edb3a432268e5831", decimals: 6 },
+  ],
+  10: [ // Optimism
+    { symbol: "ETH", name: "Ethereum", address: "NATIVE", decimals: 18 },
+    { symbol: "USDC", name: "USD Coin", address: "0x0b2c639c533813f4aa9d7837caf62653d097ff85", decimals: 6 },
+  ],
+};
+
+const ERC20_ABI = [
+  parseAbiItem("function allowance(address owner, address spender) view returns (uint256)"),
+  parseAbiItem("function approve(address spender, uint256 amount) returns (bool)"),
+  parseAbiItem("function balanceOf(address owner) view returns (uint256)"),
+] as const;
 
 export default function DefiSwapPage() {
   const { address, isConnected } = useAccount();
-  const [activeModule] = useState("swap");
-  const [selectedChain, setSelectedChain] = useState("base-sepolia");
+  const walletChainId = useChainId();
+  const { switchChain } = useSwitchChain();
 
-  // Chain mapping helpers
+  const [selectedChain, setSelectedChain] = useState("base-sepolia");
+  const [sellTokenSymbol, setSellTokenSymbol] = useState("ETH");
+  const [buyTokenSymbol, setBuyTokenSymbol] = useState("WGT");
+  const [sellAmountInput, setSellAmountInput] = useState("0.1");
+  const [slippagePercent, setSlippagePercent] = useState(0.5);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Quote State
+  const [quote, setQuote] = useState<any>(null);
+  const [isQuoting, setIsQuoting] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const [countdown, setCountdown] = useState(30);
+
+  // Transaction Status
+  const [txStatus, setTxStatus] = useState<
+    "IDLE" | "CHECKING_ALLOWANCE" | "APPROVAL_REQUIRED" | "AWAITING_APPROVAL_SIGNATURE" |
+    "APPROVAL_PENDING" | "READY_TO_SWAP" | "AWAITING_SWAP_SIGNATURE" | "SWAP_PENDING" |
+    "COMPLETED" | "FAILED"
+  >("IDLE");
+
+  const [activeTxHash, setActiveTxHash] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isConfirmingModal, setIsConfirmingModal] = useState(false);
+
+  // Chain helpers
   const chainMap = React.useMemo(() => ({
     "base-sepolia": 84532,
     "base-mainnet": 8453,
@@ -36,29 +99,142 @@ export default function DefiSwapPage() {
     "optimism": 10,
   } as Record<string, number>), []);
 
-  const chainIdToKey = React.useCallback((id: number): string => {
-    return Object.keys(chainMap).find((key) => chainMap[key] === id) || "base-sepolia";
-  }, [chainMap]);
-
   const activeChainId = chainMap[selectedChain] || 84532;
   const chainGuard = useChainGuard(activeChainId);
-  const walletChainId = useChainId();
-  const { switchChain } = useSwitchChain();
+  const tokens = TOKEN_REGISTRY[activeChainId] || [];
 
-  // Sync dropdown with active wallet chain
+  const sellToken = tokens.find((t) => t.symbol === sellTokenSymbol) || tokens[0];
+  const buyToken = tokens.find((t) => t.symbol === buyTokenSymbol) || tokens[1] || tokens[0];
+
+  // Sync chain selector dropdown with wallet network
   useEffect(() => {
     if (isConnected && walletChainId) {
-      const isSupported = Object.values(chainMap).includes(walletChainId);
-      if (isSupported) {
-        const key = chainIdToKey(walletChainId);
-        if (selectedChain !== key) {
-          setSelectedChain(key);
-        }
+      const key = Object.keys(chainMap).find((k) => chainMap[k] === walletChainId);
+      if (key && key !== selectedChain) {
+        setSelectedChain(key);
       }
     }
-  }, [walletChainId, isConnected, chainMap, chainIdToKey, selectedChain]);
+  }, [walletChainId, isConnected, selectedChain, chainMap]);
 
-  // Handle dropdown change and switch wallet network
+  // Adjust token choices if chain changes to avoid out-of-index
+  useEffect(() => {
+    const chainTokens = TOKEN_REGISTRY[activeChainId] || [];
+    if (chainTokens.length > 0) {
+      setSellTokenSymbol(chainTokens[0].symbol);
+      setBuyTokenSymbol(chainTokens[1]?.symbol || chainTokens[0].symbol);
+    }
+  }, [activeChainId]);
+
+  // Balance Hooks
+  const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
+    address: address,
+    chainId: activeChainId,
+    query: { enabled: isConnected && !!address }
+  });
+
+  const { data: erc20Balance, refetch: refetchErc20Balance } = useReadContract({
+    address: sellToken?.address !== "NATIVE" ? (sellToken?.address as `0x${string}`) : undefined,
+    abi: ERC20_ABI,
+    functionName: "balanceOf",
+    args: address ? [address] : undefined,
+    query: { enabled: isConnected && !!address && sellToken?.address !== "NATIVE" }
+  });
+
+  const getActiveBalanceFormatted = () => {
+    if (!isConnected || !address) return "0.00";
+    if (sellToken?.address === "NATIVE") {
+      return ethBalance ? parseFloat(ethBalance.formatted).toFixed(4) : "0.00";
+    }
+    return erc20Balance !== undefined
+      ? (parseFloat(formatUnits(erc20Balance as bigint, sellToken.decimals))).toFixed(4)
+      : "0.00";
+  };
+
+  const getActiveBalanceRaw = (): bigint => {
+    if (!isConnected || !address) return 0n;
+    if (sellToken?.address === "NATIVE") {
+      return ethBalance ? ethBalance.value : 0n;
+    }
+    return (erc20Balance as bigint) || 0n;
+  };
+
+  // Allowance Hooks
+  const allowanceSpender = quote?.allowanceTarget || "0x0000000000000000000000000000000000000000";
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    address: sellToken?.address !== "NATIVE" ? (sellToken?.address as `0x${string}`) : undefined,
+    abi: ERC20_ABI,
+    functionName: "allowance",
+    args: address && allowanceSpender !== "0x0000000000000000000000000000000000000000" ? [address, allowanceSpender as `0x${string}`] : undefined,
+    query: { enabled: isConnected && !!address && sellToken?.address !== "NATIVE" && allowanceSpender !== "0x0000000000000000000000000000000000000000" }
+  });
+
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
+  // Fetch Swap Quote
+  const fetchQuote = useCallback(async () => {
+    if (!isConnected || !address || !sellToken || !buyToken) return;
+    if (sellToken.symbol === buyToken.symbol) return;
+    const sellAmtFloat = parseFloat(sellAmountInput);
+    if (isNaN(sellAmtFloat) || sellAmtFloat <= 0) return;
+
+    setIsQuoting(true);
+    setQuoteError("");
+    try {
+      const rawSellAmt = parseUnits(sellAmountInput, sellToken.decimals).toString();
+      const slippageBps = Math.floor(slippagePercent * 100);
+
+      const response = await fetch(`${backendUrl}/api/v1/defi/swap-quote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chainId: activeChainId,
+          walletAddress: address,
+          sellToken: sellToken.address,
+          buyToken: buyToken.address,
+          sellAmount: rawSellAmt,
+          slippageBps,
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to fetch swap route from provider.");
+      }
+
+      const quoteData = await response.json();
+      setQuote(quoteData);
+      setCountdown(30);
+    } catch (err: any) {
+      setQuote(null);
+      setQuoteError(err.message || "No supported routing available.");
+    } finally {
+      setIsQuoting(false);
+    }
+  }, [address, isConnected, sellToken, buyToken, sellAmountInput, slippagePercent, activeChainId, backendUrl]);
+
+  // Debouncing Quote requests
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchQuote();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [sellAmountInput, sellTokenSymbol, buyTokenSymbol, slippagePercent, fetchQuote]);
+
+  // Countdown timer for quote freshness
+  useEffect(() => {
+    if (!quote) return;
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          fetchQuote();
+          return 30;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [quote, fetchQuote]);
+
   const handleChainChange = (val: string) => {
     setSelectedChain(val);
     const targetId = chainMap[val];
@@ -67,87 +243,228 @@ export default function DefiSwapPage() {
     }
   };
 
-  const [fromToken, setFromToken] = useState("ETH");
-  const [toToken, setToToken] = useState("WGT");
-  const [amount, setAmount] = useState("0.1");
-  const [slippage, setSlippage] = useState(0.5);
-  const [expectedOutput, setExpectedOutput] = useState("");
-  const [gasEstimate, setGasEstimate] = useState("");
-  const [routerAddress, setRouterAddress] = useState("");
-  const [selectedAdapter, setSelectedAdapter] = useState("uniswap");
-  const [swapError, setSwapError] = useState("");
+  const handleMaxClick = () => {
+    const bal = getActiveBalanceFormatted();
+    // reserve some ETH for gas if native
+    if (sellToken?.address === "NATIVE") {
+      const maxEth = Math.max(parseFloat(bal) - 0.005, 0);
+      setSellAmountInput(maxEth.toFixed(4));
+    } else {
+      setSellAmountInput(bal);
+    }
+  };
 
-  const [isQuoting, setIsQuoting] = useState(false);
-  const [isConfirming, setIsConfirming] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  const { writeContractAsync: writeApproval } = useWriteContract();
+  const { sendTransactionAsync: executeSwap } = useSendTransaction();
 
-  const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  // Approve Spender Contract
+  const handleApprove = async () => {
+    if (!isConnected || !address || !quote || !allowanceSpender) return;
+    setTxStatus("AWAITING_APPROVAL_SIGNATURE");
+    setErrorMessage("");
 
-  const { data: swapTxHash, sendTransaction, error: sendError, isPending: isSending } = useSendTransaction();
-  const { isLoading: isWaitingConfirm, isSuccess: isSwapConfirmed } = useWaitForTransactionReceipt({ hash: swapTxHash });
-
-  const isSwapping = isSending || isWaitingConfirm;
-  const swapTx = swapTxHash || "";
-
-  const fetchQuote = async () => {
-    if (!amount || parseFloat(amount) <= 0) return;
-    setIsQuoting(true);
     try {
-      const response = await fetch(`${backendUrl}/api/v1/defi/swap-quote`, {
+      const txHash = await writeApproval({
+        address: sellToken.address as `0x${string}`,
+        abi: ERC20_ABI,
+        functionName: "approve",
+        args: [allowanceSpender as `0x${string}`, BigInt(quote.sellAmount)],
+      });
+
+      setTxStatus("APPROVAL_PENDING");
+      setActiveTxHash(txHash);
+
+      // Register Pending approval in backend (optional transaction indexing)
+      await fetch(`${backendUrl}/api/v1/transactions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adapter: selectedAdapter, fromToken, toToken, amount, slippage })
+        body: JSON.stringify({
+          walletAddress: address,
+          txHash,
+          network: selectedChain,
+          chainId: activeChainId,
+          type: "APPROVE",
+          status: "PENDING",
+          details: { tokenSymbol: sellToken.symbol, spender: allowanceSpender }
+        })
       });
-      if (response.ok) {
-        const data = await response.json();
-        setExpectedOutput(data.expectedOutput);
-        setGasEstimate(data.gasEstimate);
-        setRouterAddress(data.routerAddress);
+    } catch (err: any) {
+      setTxStatus("IDLE");
+      setErrorMessage(parseContractError(err) || "Approval rejected by user.");
+    }
+  };
+
+  // Perform Swap calldata execution
+  const handleSwap = async () => {
+    if (!isConnected || !address || !quote) return;
+    setTxStatus("AWAITING_SWAP_SIGNATURE");
+    setIsConfirmingModal(false);
+    setErrorMessage("");
+
+    try {
+      // Validate wallet inputs
+      const currentBal = getActiveBalanceRaw();
+      const requiredAmt = BigInt(quote.sellAmount);
+      if (currentBal < requiredAmt) {
+        throw new Error("Insufficient balance to execute this trade.");
       }
-    } catch (err) { console.error(err); }
-    finally { setIsQuoting(false); }
+
+      // Execute transaction with provider calldata
+      const txHash = await executeSwap({
+        to: quote.transactionTarget as `0x${string}`,
+        data: quote.transactionCalldata as `0x${string}`,
+        value: BigInt(quote.transactionValue),
+      });
+
+      setTxStatus("SWAP_PENDING");
+      setActiveTxHash(txHash);
+
+      // Register pending swap with backend
+      await fetch(`${backendUrl}/api/v1/defi/swap/pending`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          walletAddress: address,
+          chainId: activeChainId,
+          provider: quote.provider,
+          sellTokenAddress: sellToken.address,
+          sellTokenSymbol: sellToken.symbol,
+          sellTokenDecimals: sellToken.decimals,
+          sellAmount: quote.sellAmount,
+          buyTokenAddress: buyToken.address,
+          buyTokenSymbol: buyToken.symbol,
+          buyTokenDecimals: buyToken.decimals,
+          quotedBuyAmount: quote.expectedBuyAmount,
+          minimumBuyAmount: quote.minimumReceived,
+          slippageBps: Math.floor(slippagePercent * 100),
+          swapTransactionHash: txHash,
+          allowanceTarget: quote.allowanceTarget,
+          routerAddress: quote.transactionTarget,
+        })
+      });
+    } catch (err: any) {
+      setTxStatus("IDLE");
+      setErrorMessage(parseContractError(err) || err.message || "Swap transaction rejected.");
+    }
   };
 
-  useEffect(() => { fetchQuote(); }, [amount, fromToken, toToken, selectedAdapter, slippage]);
+  // Receipt monitoring for approvals & swaps
+  const { data: receiptData } = useWaitForTransactionReceipt({ hash: activeTxHash as `0x${string}` });
 
-  const triggerSwapTx = () => {
-    if (!isConnected) return;
-    if (!chainGuard.isCorrectChain) { setSwapError(`Wrong chain — switch wallet to ${chainGuard.requiredChainName}.`); return; }
-    setIsConfirming(true);
-  };
+  useEffect(() => {
+    if (receiptData) {
+      if (txStatus === "APPROVAL_PENDING") {
+        if (receiptData.status === "success") {
+          setTxStatus("READY_TO_SWAP");
+          refetchAllowance();
+          refetchErc20Balance();
+        } else {
+          setTxStatus("FAILED");
+          setErrorMessage("Token approval transaction reverted.");
+        }
+      } else if (txStatus === "SWAP_PENDING") {
+        if (receiptData.status === "success") {
+          setTxStatus("COMPLETED");
+          // Confirm backend sync
+          fetch(`${backendUrl}/api/v1/defi/swap/confirm`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chainId: activeChainId, txHash: activeTxHash })
+          }).then(() => {
+            // refresh balances
+            refetchEthBalance();
+            refetchErc20Balance();
+            refetchAllowance();
+          });
+        } else {
+          setTxStatus("FAILED");
+          setErrorMessage("Swap execution transaction reverted.");
+        }
+      }
+    }
+  }, [receiptData, txStatus, activeChainId, activeTxHash, backendUrl, refetchAllowance, refetchErc20Balance, refetchEthBalance]);
 
-  const confirmSwap = () => {
-    setIsConfirming(false);
-    setSwapError("");
-
-    if (!routerAddress || routerAddress === "0x0000000000000000000000000000000000000000") {
-      setSwapError(`Swap router is not configured on the selected network (${chainGuard.requiredChainName}).`);
-      return;
+  // Determine button state
+  const getActionButton = () => {
+    if (!isConnected) {
+      return (
+        <SafeWalletButton showBalance={false} />
+      );
     }
 
-    // Real wallet-signed transaction to the DEX router
-    sendTransaction({
-      to: routerAddress as `0x${string}`,
-      value: fromToken === "ETH" ? parseEther(amount) : BigInt(0),
-      // Router calldata would be encoded from the quote here in production
-      // For now we send the ETH value — router handles the swap logic
-    });
+    if (!chainGuard.isCorrectChain) {
+      return (
+        <button
+          onClick={() => switchChain?.({ chainId: activeChainId })}
+          className="w-full rounded-full bg-rose-600 py-3.5 text-xs font-semibold text-white transition hover:bg-rose-500"
+        >
+          Switch Wallet Network to {chainGuard.requiredChainName}
+        </button>
+      );
+    }
+
+    const currentBal = getActiveBalanceRaw();
+    const sellUnits = parseUnits(sellAmountInput, sellToken?.decimals || 18);
+
+    if (currentBal < sellUnits) {
+      return (
+        <button
+          disabled
+          className="w-full rounded-full bg-slate-800 py-3.5 text-xs font-semibold text-slate-500 cursor-not-allowed border border-white/5"
+        >
+          Insufficient {sellToken?.symbol} Balance
+        </button>
+      );
+    }
+
+    // Check allowance if required
+    if (sellToken?.address !== "NATIVE" && quote && allowance !== undefined) {
+      const allowed = BigInt(allowance.toString());
+      const required = BigInt(quote.sellAmount);
+
+      if (allowed < required) {
+        return (
+          <button
+            onClick={handleApprove}
+            disabled={txStatus === "AWAITING_APPROVAL_SIGNATURE" || txStatus === "APPROVAL_PENDING"}
+            className="w-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-600 py-3.5 text-xs font-semibold text-white transition hover:opacity-95"
+          >
+            {txStatus === "AWAITING_APPROVAL_SIGNATURE" ? "Awaiting wallet signature…" :
+             txStatus === "APPROVAL_PENDING" ? "Approving spender contract on-chain…" :
+             `Approve ${sellToken.symbol} Spender`}
+          </button>
+        );
+      }
+    }
+
+    return (
+      <button
+        onClick={() => setIsConfirmingModal(true)}
+        disabled={isQuoting || !quote || txStatus === "AWAITING_SWAP_SIGNATURE" || txStatus === "SWAP_PENDING"}
+        className="w-full rounded-full bg-gradient-to-r from-amber-500 to-yellow-600 py-3.5 text-xs font-semibold text-white transition hover:opacity-95"
+      >
+        {isQuoting ? "Fetching routing path…" : "Swap Assets"}
+      </button>
+    );
   };
+
+  const formattedOutput = quote ? parseFloat(formatUnits(BigInt(quote.expectedBuyAmount), buyToken?.decimals || 18)).toFixed(6) : "0.00";
+  const formattedMin = quote ? parseFloat(formatUnits(BigInt(quote.minimumReceived), buyToken?.decimals || 18)).toFixed(6) : "0.00";
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       
-      {/* Top Header */}
+      {/* Header */}
       <header className="h-16 border-b border-white/10 bg-slate-900/40 backdrop-blur-md px-6 flex items-center justify-between z-10">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-cyan-400 via-indigo-500 to-fuchsia-500 p-[2px]">
-            <div className="flex h-full w-full items-center justify-center rounded-[8px] bg-slate-950 text-sm font-black text-cyan-400">
+          <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-amber-400 via-yellow-500 to-amber-600 p-[2px]">
+            <div className="flex h-full w-full items-center justify-center rounded-[8px] bg-slate-950 text-sm font-black text-amber-400">
               W
             </div>
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold uppercase tracking-[0.2em] bg-gradient-to-r from-cyan-400 via-indigo-300 to-fuchsia-400 bg-clip-text text-transparent">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] bg-gradient-to-r from-amber-400 to-yellow-500 bg-clip-text text-transparent">
                 Web3 Creator Operating System
               </span>
             </div>
@@ -156,12 +473,26 @@ export default function DefiSwapPage() {
         </div>
 
         <div className="flex items-center gap-4">
-          <ChainSelector />
+          <div className="flex items-center gap-1 bg-slate-900 border border-white/10 p-1.5 rounded-full text-xs">
+            <Globe className="h-3.5 w-3.5 text-amber-400 ml-1.5" />
+            <select
+              value={selectedChain}
+              onChange={(e) => handleChainChange(e.target.value)}
+              className="bg-transparent text-white text-[11px] font-bold outline-none pr-2 cursor-pointer"
+            >
+              <option value="base-sepolia" className="bg-slate-950">Base Sepolia</option>
+              <option value="base-mainnet" className="bg-slate-950">Base Mainnet</option>
+              <option value="ethereum" className="bg-slate-950">Ethereum</option>
+              <option value="polygon" className="bg-slate-950">Polygon</option>
+              <option value="arbitrum" className="bg-slate-950">Arbitrum</option>
+              <option value="optimism" className="bg-slate-950">Optimism</option>
+            </select>
+          </div>
           <SafeWalletButton showBalance={false} />
         </div>
       </header>
 
-      {/* Workspace Environment */}
+      {/* Sidebar & Workspace */}
       <div className="flex-1 flex overflow-hidden">
         
         {/* Sidebar */}
@@ -193,11 +524,7 @@ export default function DefiSwapPage() {
 
             <button
               onClick={() => window.location.href = "/defi/swap"}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
-                activeModule === "swap"
-                  ? "bg-amber-600/10 text-amber-400 border border-amber-500/20"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/40 border border-transparent"
-              }`}
+              className="w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 transition-all"
             >
               <span className="flex items-center gap-2.5">
                 <RefreshCw className="h-4 w-4" /> Swap Assets
@@ -217,25 +544,15 @@ export default function DefiSwapPage() {
           </div>
         </aside>
 
-        {/* Central swap panel */}
+        {/* Console Swap Panel */}
         <main className="flex-1 overflow-y-auto bg-slate-950 p-6 flex flex-col items-center justify-center">
           <WalletGuard requiredFeature="DeFi Swap Module">
             <div className="max-w-md w-full rounded-3xl border border-white/10 bg-slate-900/40 p-6 space-y-4 shadow-2xl backdrop-blur-xl relative">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <RefreshCw className="h-5 w-5 text-amber-400" /> Swap Assets
-              </h3>
-              <div className="flex items-center gap-1">
-                {/* Provider select */}
-                <select
-                  value={selectedAdapter}
-                  onChange={(e) => setSelectedAdapter(e.target.value)}
-                  className="bg-slate-950 border border-white/10 rounded-xl px-2 py-1 text-[10px] text-white outline-none cursor-pointer"
-                >
-                  <option value="uniswap">Uniswap V3</option>
-                  <option value="1inch">1inch (Soon)</option>
-                  <option value="0x">0x API (Soon)</option>
-                </select>
+              
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <RefreshCw className="h-5 w-5 text-amber-400" /> Swap Assets
+                </h3>
                 <button
                   onClick={() => setShowSettings(!showSettings)}
                   className="p-2 text-slate-400 hover:text-white transition"
@@ -243,193 +560,211 @@ export default function DefiSwapPage() {
                   <Settings className="h-4 w-4" />
                 </button>
               </div>
-            </div>
 
-            {/* Risk Warning Panel */}
-            <div className="rounded-2xl bg-amber-500/5 border border-amber-500/25 p-3.5 text-amber-400 flex items-start gap-2.5 text-[11px] leading-relaxed">
-              <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="font-bold">Risk Warning Notice</p>
-                <p className="text-amber-400/80 mt-0.5">
-                  DEX swaps carry execution risks (e.g. slippage, path changes). Verify tokens and input settings before proceeding.
-                </p>
-              </div>
-            </div>
-
-            {showSettings && (
-              <div className="p-4 bg-slate-950 border border-white/10 rounded-2xl space-y-3 animate-fade-in">
-                <h4 className="text-xs font-bold text-white">Slippage Tolerance</h4>
-                <div className="flex gap-2">
-                  {[0.1, 0.5, 1.0].map((val) => (
-                    <button
-                      key={val}
-                      onClick={() => setSlippage(val)}
-                      className={`flex-1 py-1.5 rounded-xl border text-xs font-bold font-mono transition ${
-                        slippage === val ? "border-amber-500 bg-amber-500/10 text-amber-400" : "border-white/5 bg-slate-900 text-slate-400"
-                      }`}
-                    >
-                      {val}%
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Swap Input Form */}
-            <div className="space-y-3.5">
-              
-              {/* Pay Input */}
-              <div className="rounded-2xl bg-slate-950 border border-white/5 p-4 flex justify-between items-center">
-                <div className="space-y-1">
-                  <label className="text-[10px] text-slate-500 font-bold uppercase block">Sell Amount</label>
-                  <input
-                    type="text"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="bg-transparent text-xl font-bold font-mono outline-none text-white w-full"
-                    placeholder="0.0"
-                  />
-                </div>
-                <select
-                  value={fromToken}
-                  onChange={(e) => setFromToken(e.target.value)}
-                  className="bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none cursor-pointer"
-                >
-                  <option value="ETH">ETH</option>
-                  <option value="WGT">WGT</option>
-                  <option value="USDC">USDC</option>
-                </select>
-              </div>
-
-              {/* Arrow spacer */}
-              <div className="flex justify-center -my-2.5 relative z-10">
-                <div className="h-8 w-8 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white cursor-pointer shadow-lg">
-                  <ArrowDown className="h-4 w-4" />
-                </div>
-              </div>
-
-              {/* Receive Input */}
-              <div className="rounded-2xl bg-slate-950 border border-white/5 p-4 flex justify-between items-center">
-                <div className="space-y-1">
-                  <label className="text-[10px] text-slate-500 font-bold uppercase block">Expected Return</label>
-                  <div className="text-xl font-bold font-mono text-slate-300">
-                    {isQuoting ? <RefreshCw className="h-4 w-4 animate-spin text-amber-500" /> : expectedOutput || "0.00"}
+              {/* Slippage Settings */}
+              {showSettings && (
+                <div className="p-4 bg-slate-950 border border-white/10 rounded-2xl space-y-3">
+                  <h4 className="text-xs font-bold text-white">Slippage Tolerance</h4>
+                  <div className="flex gap-2">
+                    {[0.1, 0.5, 1.0].map((val) => (
+                      <button
+                        key={val}
+                        onClick={() => setSlippagePercent(val)}
+                        className={`flex-1 py-1.5 rounded-xl border text-xs font-bold font-mono transition ${
+                          slippagePercent === val ? "border-amber-500 bg-amber-500/10 text-amber-400" : "border-white/5 bg-slate-900 text-slate-400"
+                        }`}
+                      >
+                        {val}%
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <select
-                  value={toToken}
-                  onChange={(e) => setToToken(e.target.value)}
-                  className="bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none cursor-pointer"
-                >
-                  <option value="WGT">WGT</option>
-                  <option value="ETH">ETH</option>
-                  <option value="USDC">USDC</option>
-                </select>
+              )}
+
+              {/* Swap Inputs Form */}
+              <div className="space-y-3.5">
+                
+                {/* Pay Input */}
+                <div className="rounded-2xl bg-slate-950 border border-white/5 p-4 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] text-slate-500 font-bold uppercase">Sell Amount</label>
+                    <span className="text-[10px] text-slate-400 font-bold">
+                      Balance: <span className="font-mono">{getActiveBalanceFormatted()}</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center gap-2">
+                    <input
+                      type="text"
+                      value={sellAmountInput}
+                      onChange={(e) => setSellAmountInput(e.target.value)}
+                      className="bg-transparent text-xl font-bold font-mono outline-none text-white w-full"
+                      placeholder="0.0"
+                    />
+                    <button
+                      onClick={handleMaxClick}
+                      className="text-[9px] font-bold bg-slate-900 border border-white/10 px-2 py-1 rounded hover:bg-slate-800 transition text-amber-400 uppercase"
+                    >
+                      Max
+                    </button>
+                    <select
+                      value={sellTokenSymbol}
+                      onChange={(e) => setSellTokenSymbol(e.target.value)}
+                      className="bg-slate-900 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs font-bold text-white outline-none cursor-pointer"
+                    >
+                      {tokens.map((t) => (
+                        <option key={t.symbol} value={t.symbol}>{t.symbol}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Arrow spacer */}
+                <div className="flex justify-center -my-2.5 relative z-10">
+                  <div className="h-8 w-8 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white cursor-pointer shadow-lg">
+                    <ArrowDown className="h-4 w-4" />
+                  </div>
+                </div>
+
+                {/* Receive Input */}
+                <div className="rounded-2xl bg-slate-950 border border-white/5 p-4 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] text-slate-500 font-bold uppercase">Expected Return</label>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="text-xl font-bold font-mono text-slate-300">
+                      {isQuoting ? (
+                        <RefreshCw className="h-4 w-4 animate-spin text-amber-500" />
+                      ) : (
+                        formattedOutput
+                      )}
+                    </div>
+                    <select
+                      value={buyTokenSymbol}
+                      onChange={(e) => setBuyTokenSymbol(e.target.value)}
+                      className="bg-slate-900 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs font-bold text-white outline-none cursor-pointer"
+                    >
+                      {tokens.map((t) => (
+                        <option key={t.symbol} value={t.symbol}>{t.symbol}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
               </div>
+
+              {/* Quote Path / Route display */}
+              {quote && !isQuoting && (
+                <div className="p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl text-[10px] font-mono space-y-1.5 text-slate-400">
+                  <div className="flex justify-between items-center">
+                    <span>Routing Route:</span>
+                    <span className="text-white capitalize">{quote.route}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Min Received:</span>
+                    <span className="text-white font-bold">{formattedMin} {buyToken.symbol}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Gas estimation fee:</span>
+                    <span className="text-white">{quote.estimatedGasCostEth} ETH</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1 border-t border-white/5 text-[9px] text-slate-500">
+                    <span>Freshness:</span>
+                    <span className="text-amber-500">Refreshing in {countdown}s</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Main action triggers */}
+              {getActionButton()}
+
+              {/* Status / Errors display */}
+              {errorMessage && (
+                <div className="p-3.5 bg-rose-500/5 border border-rose-500/20 rounded-2xl flex items-start gap-2 text-xs text-rose-400 animate-fade-in">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              {quoteError && (
+                <div className="p-3.5 bg-amber-500/5 border border-amber-500/20 rounded-2xl flex items-start gap-2 text-xs text-amber-400 animate-fade-in">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <span>{quoteError}</span>
+                </div>
+              )}
+
+              {txStatus === "APPROVAL_PENDING" && (
+                <div className="p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-2xl flex items-center gap-2 text-xs text-cyan-400 font-semibold animate-pulse">
+                  <RefreshCw className="h-4 w-4 animate-spin" /> Approval pending on-chain…
+                </div>
+              )}
+
+              {txStatus === "SWAP_PENDING" && (
+                <div className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl flex items-center gap-2 text-xs text-indigo-400">
+                  <RefreshCw className="h-4 w-4 animate-spin" /> Swapping on-chain — confirming receipt…
+                </div>
+              )}
+
+              {txStatus === "COMPLETED" && (
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl space-y-2 text-emerald-400 text-xs animate-fade-in">
+                  <div className="flex items-center gap-2 font-bold">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                    <span>Swap Executed Successfully!</span>
+                  </div>
+                  <a
+                    href={getExplorerTxUrl(activeChainId, activeTxHash)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[9px] font-mono text-emerald-500/80 truncate block underline"
+                  >
+                    View Tx: {activeTxHash}
+                  </a>
+                </div>
+              )}
 
             </div>
-
-            {/* Quote details */}
-            {expectedOutput && (
-              <div className="p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl text-[10px] font-mono space-y-1.5 text-slate-400">
-                <div className="flex justify-between">
-                  <span>Routing path:</span>
-                  <span className="text-white capitalize">{selectedAdapter} router</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Gas estimation fee:</span>
-                  <span className="text-white">{gasEstimate} ETH</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Router:</span>
-                  <span className="text-slate-500 text-[8px] max-w-[200px] truncate">{routerAddress}</span>
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={triggerSwapTx}
-              disabled={isQuoting || !isConnected || isSwapping}
-              className="w-full rounded-full bg-gradient-to-r from-amber-500 to-indigo-600 py-3.5 text-xs font-semibold text-white transition hover:opacity-95 active:scale-95 disabled:opacity-50"
-            >
-              {isQuoting ? "Fetching Quote…" : isSwapping ? "Awaiting wallet / Confirming…" : isConnected ? "Swap Assets" : "Connect Wallet to Trade"}
-            </button>
-
-            {/* Error banner */}
-            {(swapError || sendError) && (
-              <div className="p-3.5 bg-rose-500/5 border border-rose-500/20 rounded-2xl flex items-start gap-2 text-xs text-rose-400">
-                <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                <span>{swapError || parseContractError(sendError)}</span>
-              </div>
-            )}
-
-            {/* Pending wallet */}
-            {isSending && !swapTxHash && (
-              <div className="p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-2xl flex items-center gap-2 text-xs text-cyan-400 font-semibold animate-pulse">
-                <RefreshCw className="h-4 w-4 animate-spin" /> Awaiting wallet signature…
-              </div>
-            )}
-
-            {/* Submitted / confirming */}
-            {swapTxHash && !isSwapConfirmed && (
-              <div className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl flex items-center gap-2 text-xs text-indigo-400">
-                <RefreshCw className="h-4 w-4 animate-spin" /> Transaction submitted — confirming on-chain…
-                <a href={getExplorerTxUrl(walletChainId, swapTxHash)} target="_blank" rel="noreferrer" className="underline ml-1 text-indigo-300">View</a>
-              </div>
-            )}
-
-            {/* Confirmed */}
-            {isSwapConfirmed && swapTxHash && (
-              <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl space-y-2 text-emerald-400 text-xs">
-                <div className="flex items-center gap-2 font-bold">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-                  <span>Swap Confirmed</span>
-                </div>
-                <a href={getExplorerTxUrl(walletChainId, swapTxHash)} target="_blank" rel="noreferrer"
-                  className="text-[9px] font-mono text-emerald-500/80 truncate block underline">{swapTxHash}</a>
-              </div>
-            )}
-
-          </div>
           </WalletGuard>
         </main>
       </div>
 
       {/* Confirmation Modal */}
-      {isConfirming && (
+      {isConfirmingModal && quote && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-6 space-y-4 shadow-2xl relative">
             <button
-              onClick={() => setIsConfirming(false)}
+              onClick={() => setIsConfirmingModal(false)}
               className="absolute right-4 top-4 text-slate-400 hover:text-white transition"
             >
               <X className="h-5 w-5" />
             </button>
             <h3 className="text-base font-bold text-white">Confirm Token Swap</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Every swap transaction requires active wallet signature confirmation. Verify the paths, values, and fees below.
+              DEX swaps require signature execution. Please verify routing, expected return, and gas impact before continuing.
             </p>
             <div className="p-4 bg-slate-950 border border-white/5 rounded-2xl space-y-2.5 text-xs font-mono text-slate-300">
               <div className="flex justify-between">
                 <span>Sell amount:</span>
-                <span className="font-bold text-white">{amount} {fromToken}</span>
+                <span className="font-bold text-white">{sellAmountInput} {sellToken.symbol}</span>
               </div>
               <div className="flex justify-between">
                 <span>Buy expected:</span>
-                <span className="font-bold text-white">{expectedOutput} {toToken}</span>
+                <span className="font-bold text-white">{formattedOutput} {buyToken.symbol}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Min Received:</span>
+                <span className="text-white font-bold">{formattedMin} {buyToken.symbol}</span>
               </div>
               <div className="flex justify-between">
                 <span>Slippage settings:</span>
-                <span className="text-amber-400 font-bold">{slippage}%</span>
+                <span className="text-amber-400 font-bold">{slippagePercent}%</span>
               </div>
               <div className="flex justify-between border-t border-white/5 pt-2.5">
                 <span>Est. Gas Fee:</span>
-                <span className="font-bold text-white">{gasEstimate} ETH</span>
+                <span className="font-bold text-white">{quote.estimatedGasCostEth} ETH</span>
               </div>
             </div>
             <button
-              onClick={confirmSwap}
-              className="w-full rounded-full bg-gradient-to-r from-amber-500 to-indigo-600 py-3 text-xs font-semibold text-white transition hover:opacity-95"
+              onClick={handleSwap}
+              className="w-full rounded-full bg-gradient-to-r from-amber-500 to-yellow-600 py-3 text-xs font-semibold text-white transition hover:opacity-95"
             >
               Sign & Execute Swap
             </button>

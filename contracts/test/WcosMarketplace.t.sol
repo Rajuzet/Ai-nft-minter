@@ -9,10 +9,10 @@ contract WcosMarketplaceTest is Test {
     WcosMarketplace public marketplace;
     WcosNFTCollection public collection;
 
-    address public owner = address(1);
-    address public creator = address(2);
-    address public buyer = address(3);
-    address public royaltyReceiver = address(4);
+    address public owner = address(0x1111);
+    address public creator = address(0x2222);
+    address public buyer = address(0x3333);
+    address public royaltyReceiver = address(0x4444);
 
     function setUp() public {
         vm.deal(owner, 100 ether);
@@ -44,23 +44,26 @@ contract WcosMarketplaceTest is Test {
         collection.approve(address(marketplace), tokenId);
 
         // List token
-        marketplace.listToken(address(collection), tokenId, 1 ether);
+        uint256 listingId = marketplace.listToken(address(collection), tokenId, 1 ether);
 
         // Verify listing details
-        (address seller, uint256 price, bool active) = marketplace.listings(address(collection), tokenId);
+        (uint256 id, address nftAddr, uint256 token, address seller, uint256 price, bool active) = marketplace.listings(listingId);
         assertEq(seller, owner);
         assertEq(price, 1 ether);
         assertTrue(active);
+        assertEq(id, listingId);
+        assertEq(nftAddr, address(collection));
+        assertEq(token, tokenId);
 
         // Verify token in escrow
         assertEq(collection.ownerOf(tokenId), address(marketplace));
 
         // Cancel listing
-        marketplace.cancelListing(address(collection), tokenId);
+        marketplace.cancelListing(listingId);
 
         // Verify token returned
         assertEq(collection.ownerOf(tokenId), owner);
-        (, , active) = marketplace.listings(address(collection), tokenId);
+        (, , , , , active) = marketplace.listings(listingId);
         assertFalse(active);
         vm.stopPrank();
     }
@@ -69,7 +72,7 @@ contract WcosMarketplaceTest is Test {
         vm.startPrank(owner);
         uint256 tokenId = collection.mintToken(owner, "ipfs://test-uri");
         collection.approve(address(marketplace), tokenId);
-        marketplace.listToken(address(collection), tokenId, 1 ether);
+        uint256 listingId = marketplace.listToken(address(collection), tokenId, 1 ether);
         vm.stopPrank();
 
         // Check balances before
@@ -78,7 +81,7 @@ contract WcosMarketplaceTest is Test {
 
         // Buy token as buyer
         vm.startPrank(buyer);
-        marketplace.buyToken{value: 1 ether}(address(collection), tokenId);
+        marketplace.buyToken{value: 1 ether}(listingId);
         vm.stopPrank();
 
         // Verify ownership

@@ -32,6 +32,7 @@ import {
   type TxStatus,
 } from "../../lib/useWeb3Transaction";
 import { baseSepolia } from "wagmi/chains";
+import { enhancePrompt as apiEnhancePrompt, startGeneration, getGenerationStatus } from "../../lib/api";
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -90,6 +91,7 @@ interface CollectionRecord {
 
 interface ListingRecord {
   id: string;
+  onChainListingId?: number;
   nftAddress: string;
   tokenId: number;
   seller: string;
@@ -575,55 +577,110 @@ export default function DashboardPage() {
     addTerminalLog("Removed trait attribute.");
   };
 
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [aspectRatio, setAspectRatio] = useState<"1:1" | "16:9" | "9:16" | "3:2" | "2:3">("1:1");
+  const [imageSize, setImageSize] = useState<"256x256" | "512x512" | "1024x1024" | string>("1024x1024");
+  const [quality, setQuality] = useState<"standard" | "hd">("standard");
+
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim()) { setAiStatus("Enter a prompt first."); return; }
+    try {
+      setAiStatus("Enhancing prompt with AI...");
+      const res = await apiEnhancePrompt(prompt, selectedStyle);
+      setPrompt(res.enhancedPrompt);
+      setAiStatus("Prompt enhanced!");
+      addTerminalLog("Prompt enhanced via AI.");
+    } catch (err: any) {
+      setAiStatus("Failed to enhance prompt.");
+      addTerminalLog(`Enhance error: ${err.message}`);
+    }
+  };
+
   const generateArt = async () => {
     if (!prompt.trim()) { setAiStatus("Enter a prompt first."); return; }
+    if (!address) { setAiStatus("Connect wallet first."); return; }
+    
     setIsGenerating(true);
     setAiStatus(`Generating ${aiStudioSubTab}…`);
-    addTerminalLog(`Requesting multi-modal (${aiStudioSubTab}) generation via driver: ${storageDriver.toUpperCase()}`);
+    addTerminalLog(`Requesting multi-modal (${aiStudioSubTab}) generation`);
 
     if (aiStudioSubTab === "image") {
-      const styleSuffixes: Record<string, string> = {
-        cyberpunk: ", cyberpunk aesthetic, neon lights, high tech, futuristic, 8k resolution",
-        cinematic: ", cinematic lighting, detailed, dramatic shadows, photorealistic, 35mm lens",
-        anime: ", gorgeous modern anime style, makoto shinkai aesthetic, digital art, highly polished",
-        retro: ", synthwave style, retro-futuristic, vaporwave, sunset grid, chrome reflections",
-        abstract: ", abstract expressionism, rich textures, complex geometry, emotional color palette",
-      };
-      const fullPrompt = prompt.trim() + (styleSuffixes[selectedStyle] || "");
       try {
-        const response = await fetch(`${backendUrl}/api/v1/ai/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: fullPrompt, storage: storageDriver,
-            customMetadata: {
-              name: nftName || undefined, description: nftDescription || undefined,
-              category: nftCategory, traits: traitsList.map((t) => ({ traitType: t.traitType, value: t.value })),
-              royaltyPercentage: Number(nftRoyalty), externalUrl: nftExternalUrl || undefined,
-              unlockableContent: nftUnlockable || undefined,
-            },
-          }),
+        const data = await startGeneration({
+          prompt: prompt.trim(),
+          negativePrompt: negativePrompt.trim() || undefined,
+          style: selectedStyle,
+          category: nftCategory,
+          aspectRatio,
+          imageSize,
+          quality,
+          walletAddress: address,
+          customMetadata: {
+            name: nftName || undefined,
+            description: nftDescription || undefined,
+            category: nftCategory,
+            traits: traitsList.map((t) => ({ traitType: t.traitType, value: t.value })),
+            royaltyPercentage: Number(nftRoyalty),
+            externalUrl: nftExternalUrl || undefined,
+            unlockableContent: nftUnlockable || undefined,
+          }
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Generation request failed");
-        setMetadataUrl(data.metadataUrl);
-        setImageUrl(data.imageUrl);
-        setAiStatus(`Art generated & saved on ${storageDriver.toUpperCase()}! Ready to mint.`);
-        addTerminalLog(`Art saved on ${storageDriver.toUpperCase()}: ${data.imageUrl}`);
 
-        const newDraft: DraftAsset = {
-          id: crypto.randomUUID(), imageUrl: data.imageUrl, metadataUrl: data.metadataUrl,
-          prompt: fullPrompt, name: nftName || `AI Artwork #${Date.now()}`,
-          description: nftDescription || "WCOS Custom AI Asset", category: nftCategory,
-          royalty: nftRoyalty, externalUrl: nftExternalUrl, unlockableContent: nftUnlockable,
-          traits: [...traitsList], status: "DRAFT", timestamp: new Date().toLocaleTimeString(),
-          collectionAddress: selectedCollection,
-        };
-        setDraftAssets((prev) => [newDraft, ...prev]);
+        if (!data.success) throw new Error(data.message || "Generation request failed");
+        
+        setAiStatus("Generation queued. Waiting for completion...");
+        addTerminalLog(`Generation queued. Asset ID: ${data.assetId}`);
+
+        // Poll for completion
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusData = await getGenerationStatus(data.assetId);
+            if (statusData.status === 'READY') {
+              clearInterval(pollInterval);
+              setMetadataUrl(statusData.metadataUri);
+              setImageUrl(statusData.imageUrl || statusData.imageUri);
+              setAiStatus(`Art generated & saved on IPFS! Ready to mint.`);
+              addTerminalLog(`Art saved on IPFS: ${statusData.imageUrl}`);
+
+              const newDraft: DraftAsset = {
+                id: statusData.id,
+                imageUrl: statusData.imageUrl || statusData.imageUri,
+                metadataUrl: statusData.metadataUri,
+                prompt: statusData.finalPrompt || prompt,
+                name: statusData.name || `AI Artwork #${Date.now()}`,
+                description: nftDescription || "WCOS Custom AI Asset",
+                category: statusData.category || nftCategory,
+                royalty: nftRoyalty,
+                externalUrl: nftExternalUrl,
+                unlockableContent: nftUnlockable,
+                traits: [...traitsList],
+                status: "DRAFT",
+                timestamp: new Date().toLocaleTimeString(),
+                collectionAddress: selectedCollection,
+              };
+              setDraftAssets((prev) => [newDraft, ...prev]);
+              setIsGenerating(false);
+            } else if (statusData.status === 'FAILED') {
+              clearInterval(pollInterval);
+              setAiStatus("Generation failed.");
+              addTerminalLog(`AI Service Error: ${statusData.errorMessage}`);
+              setIsGenerating(false);
+            } else {
+              setAiStatus(`Status: ${statusData.status}...`);
+            }
+          } catch (err: any) {
+             clearInterval(pollInterval);
+             setAiStatus("Error checking status.");
+             addTerminalLog(`Polling Error: ${err.message}`);
+             setIsGenerating(false);
+          }
+        }, 3000);
+
       } catch (err: any) {
-        setAiStatus("Generation failed. Check server connectivity.");
-        addTerminalLog(`AI Service Error: ${err.message || err}`);
-      } finally { setIsGenerating(false); }
+        setAiStatus("Generation request failed. Check server connectivity.");
+        addTerminalLog(`AI Request Error: ${err.message || err}`);
+        setIsGenerating(false);
+      }
     } else {
       // [DEV_MODE] Non-image generation — mock only until multi-modal backend ready
       setTimeout(() => {
@@ -677,7 +734,7 @@ export default function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contractAddress: mintTargetContract,
-          chainId: Number(chainId || 84532),
+          chainId: Number(walletChainId || 84532),
           ownerAddress: address,
           name: draft.name,
           description: draft.description,
@@ -738,13 +795,65 @@ export default function DashboardPage() {
           await fetch(`${backendUrl}/api/v1/marketplace/cancel`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: listing.id }),
+            body: JSON.stringify({ id: listing.id, txHash }),
           });
         } catch { /* non-critical */ }
         fetchListings();
       }
     },
     onError: (err) => addTerminalLog(`✗ Cancel failed: ${err}`),
+  });
+
+  const listTx = useWeb3Transaction({
+    onSuccess: async (txHash, receipt) => {
+      addTerminalLog(`✓ NFT Listed on Marketplace! Tx: ${txHash}`);
+      try {
+        const response = await fetch(`${backendUrl}/api/v1/marketplace/list`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nftAddress: selectedAssetForListing?.collectionAddress || contractAddresses.AINFTMinter,
+            tokenId: selectedAssetForListing?.tokenId ?? 0,
+            seller: address || "0x0000000000000000000000000000000000000000",
+            price: listingPrice, collectionName: "AI Studio Collective", chain: selectedChain,
+            imageUrl: selectedAssetForListing?.imageUrl, name: selectedAssetForListing?.name,
+            description: selectedAssetForListing?.description,
+            txHash: txHash
+          }),
+        });
+        if (response.ok) {
+          addTerminalLog("Successfully recorded listing in database!");
+          setDraftAssets((prev) =>
+            prev.map((asset) =>
+              asset.id === selectedAssetForListing?.id ? { ...asset, status: "LISTED" } : asset
+            )
+          );
+          fetchListings();
+          setIsListingModalOpen(false);
+        }
+      } catch (err: any) { addTerminalLog(`Listing DB sync error: ${err.message}`); }
+    },
+    onError: (err) => addTerminalLog(`✗ Listing failed: ${err}`),
+  });
+
+  const approveTx = useWeb3Transaction({
+    onSuccess: (txHash) => {
+      addTerminalLog(`✓ NFT Approved for marketplace. Tx: ${txHash}`);
+      if (selectedAssetForListing) {
+        addTerminalLog(`Initiating on-chain listing...`);
+        listTx.execute({
+          address: contractAddresses.WcosMarketplace,
+          abi: WcosMarketplaceABI,
+          functionName: "listToken",
+          args: [
+            (selectedAssetForListing.collectionAddress || contractAddresses.AINFTMinter) as `0x${string}`, 
+            BigInt(selectedAssetForListing.tokenId ?? 0), 
+            parseEther(listingPrice)
+          ],
+        });
+      }
+    },
+    onError: (err) => addTerminalLog(`✗ Approval failed: ${err}`),
   });
 
   const fetchListings = useCallback(async () => {
@@ -763,31 +872,25 @@ export default function DashboardPage() {
 
   const submitListing = async () => {
     if (!selectedAssetForListing) return;
-    addTerminalLog(`Listing NFT "${selectedAssetForListing.name}" for ${listingPrice} ETH…`);
-    try {
-      const response = await fetch(`${backendUrl}/api/v1/marketplace/list`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nftAddress: selectedAssetForListing.collectionAddress || contractAddresses.AINFTMinter,
-          tokenId: selectedAssetForListing.tokenId ?? Math.floor(Math.random() * 1000),
-          seller: address || "0x0000000000000000000000000000000000000000",
-          price: listingPrice, collectionName: "AI Studio Collective", chain: selectedChain,
-          imageUrl: selectedAssetForListing.imageUrl, name: selectedAssetForListing.name,
-          description: selectedAssetForListing.description,
-        }),
-      });
-      if (response.ok) {
-        addTerminalLog("Successfully listed NFT for sale!");
-        setDraftAssets((prev) =>
-          prev.map((asset) =>
-            asset.id === selectedAssetForListing.id ? { ...asset, status: "LISTED" } : asset
-          )
-        );
-        fetchListings();
-        setIsListingModalOpen(false);
-      }
-    } catch (err: any) { addTerminalLog(`Listing error: ${err.message}`); }
+    if (isPlaceholderAddress(contractAddresses.WcosMarketplace)) {
+      addTerminalLog(`Error: Marketplace contract is not configured.`);
+      return;
+    }
+    
+    if (selectedAssetForListing.tokenId === undefined || selectedAssetForListing.tokenId === null || selectedAssetForListing.tokenId === -1) {
+        addTerminalLog("Error: NFT must be minted first to have a Token ID before listing.");
+        return;
+    }
+
+    const nftAddress = selectedAssetForListing.collectionAddress || contractAddresses.AINFTMinter;
+    addTerminalLog(`Approving marketplace to transfer "${selectedAssetForListing.name}" (Token ID: ${selectedAssetForListing.tokenId})...`);
+    
+    approveTx.execute({
+      address: nftAddress as `0x${string}`,
+      abi: AINFTMinterABI,
+      functionName: "approve",
+      args: [contractAddresses.WcosMarketplace, BigInt(selectedAssetForListing.tokenId)],
+    });
   };
 
   const handleBuyNFT = (listing: ListingRecord) => {
@@ -799,13 +902,18 @@ export default function DashboardPage() {
       return;
     }
 
+    if (!listing.onChainListingId) {
+      addTerminalLog(`Error: Listing does not have a valid on-chain listing ID.`);
+      return;
+    }
+
     setMarketplaceActionId(listing.id);
     addTerminalLog(`Initiating on-chain purchase of "${listing.name}" for ${listing.price} ETH…`);
     buyTx.execute({
       address: contractAddresses.WcosMarketplace,
       abi: WcosMarketplaceABI,
       functionName: "buyToken",
-      args: [listing.nftAddress as `0x${string}`, BigInt(listing.tokenId)],
+      args: [BigInt(listing.onChainListingId)],
       value: parseEther(listing.price),
     });
   };
@@ -818,13 +926,18 @@ export default function DashboardPage() {
       return;
     }
 
+    if (!listing.onChainListingId) {
+      addTerminalLog(`Error: Listing does not have a valid on-chain listing ID.`);
+      return;
+    }
+
     setMarketplaceActionId(listing.id);
     addTerminalLog(`Cancelling on-chain listing for "${listing.name}"…`);
     cancelTx.execute({
       address: contractAddresses.WcosMarketplace,
       abi: WcosMarketplaceABI,
       functionName: "cancelListing",
-      args: [listing.nftAddress as `0x${string}`, BigInt(listing.tokenId)],
+      args: [BigInt(listing.onChainListingId)],
     });
   };
 
@@ -1553,7 +1666,12 @@ export default function DashboardPage() {
                     /* Mode 2: AI Prompt Input */
                     <div className="space-y-4 pt-4 border-t border-white/5">
                       <div className="space-y-2">
-                        <label htmlFor="aiPrompt" className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">2. AI Art Text Prompt</label>
+                        <div className="flex justify-between items-center">
+                          <label htmlFor="aiPrompt" className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">2. AI Art Text Prompt</label>
+                          <button onClick={handleEnhancePrompt} className="flex items-center gap-1 text-[10px] text-cyan-400 font-bold uppercase hover:text-cyan-300 transition-colors">
+                            <Sparkles className="h-3 w-3" /> Enhance Prompt
+                          </button>
+                        </div>
                         <textarea id="aiPrompt" rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)}
                           className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-xs text-slate-100 placeholder-slate-500 outline-none transition focus:border-cyan-400"
                           placeholder="Describe your prompt, e.g. A cybernetic owl sitting on a neon skyscraper..." />

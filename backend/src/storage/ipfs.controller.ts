@@ -168,10 +168,11 @@ export class IpfsController {
           const asset = await this.prisma.aiAsset.create({
             data: {
               userId: user.id,
-              prompt: `User Uploaded NFT: ${dto.name}`,
+              walletAddress: user.walletAddress,
+              originalPrompt: `User Uploaded NFT: ${dto.name}`,
               imageUrl: dto.image,
-              metadataUrl: result.ipfsUrl,
-              storageProvider: 'ipfs',
+              metadataUri: result.ipfsUrl,
+              provider: 'ipfs',
             },
           });
           assetId = asset.id;
@@ -280,10 +281,11 @@ export class IpfsController {
           const asset = await this.prisma.aiAsset.create({
             data: {
               userId: user.id,
-              prompt: `Uploaded NFT: ${name}`,
+              walletAddress: user.walletAddress,
+              originalPrompt: `Uploaded NFT: ${name}`,
               imageUrl: imageRes.gatewayUrl,
-              metadataUrl: metaRes.ipfsUrl,
-              storageProvider: 'ipfs',
+              metadataUri: metaRes.ipfsUrl,
+              provider: 'ipfs',
             },
           });
           assetId = asset.id;

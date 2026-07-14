@@ -1,8 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { createPublicClient, http, decodeEventLog, parseAbiItem } from 'viem';
+import { baseSepolia, base, mainnet, polygon, arbitrum, optimism } from 'viem/chains';
 
 export interface ListingRecord {
   id: string;
+  onChainListingId?: number;
   nftAddress: string;
   tokenId: number;
   seller: string;
@@ -13,31 +16,29 @@ export interface ListingRecord {
   imageUrl: string;
   name: string;
   description: string;
-  status: 'LISTED' | 'BOUGHT' | 'CANCELLED';
+  status: string;
   buyer?: string;
   txHash?: string;
   timestamp: string;
 }
 
+const getViemChain = (chainId: number) => {
+  switch (chainId) {
+    case 8453: return base;
+    case 1: return mainnet;
+    case 137: return polygon;
+    case 42161: return arbitrum;
+    case 10: return optimism;
+    case 84532:
+    default: return baseSepolia;
+  }
+};
+
 @Injectable()
 export class MarketplaceService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(MarketplaceService.name);
 
-  private defaultListing: ListingRecord = {
-    id: 'list-1',
-    nftAddress: '0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A',
-    tokenId: 0,
-    seller: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
-    price: '0.05',
-    collectionName: 'AI Studio Collective',
-    chain: 'base-sepolia',
-    chainId: 84532,
-    imageUrl: 'https://api.dicebear.com/7.x/shapes/svg?seed=MarketItem1',
-    name: 'Neo Cyber Wanderer #001',
-    description: 'First edition visual asset listed on WCOS Foundation.',
-    status: 'LISTED',
-    timestamp: new Date().toISOString(),
-  };
+  constructor(private readonly prisma: PrismaService) {}
 
   async findAll(): Promise<ListingRecord[]> {
     const listings = await this.prisma.marketplaceListing.findMany({
@@ -46,12 +47,9 @@ export class MarketplaceService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (listings.length === 0) {
-      return [this.defaultListing];
-    }
-
     return listings.map((l) => ({
       id: l.id,
+      onChainListingId: l.onChainListingId ?? undefined,
       nftAddress: l.nftAddress,
       tokenId: l.tokenId,
       seller: l.seller?.walletAddress || '0x0000000000000000000000000000000000000000',
@@ -62,14 +60,14 @@ export class MarketplaceService {
       imageUrl: l.imageUrl,
       name: l.name,
       description: l.description,
-      status: 'LISTED',
+      status: l.status,
       buyer: l.buyer?.walletAddress,
-      txHash: l.txHash || undefined,
+      txHash: l.listingTransactionHash || undefined,
       timestamp: l.createdAt.toISOString(),
     }));
   }
 
-  async create(dto: Omit<ListingRecord, 'id' | 'status' | 'timestamp'>): Promise<ListingRecord> {
+  async create(dto: any): Promise<ListingRecord> {
     const sellerAddress = dto.seller.toLowerCase();
     
     let seller = await this.prisma.user.findUnique({
@@ -85,6 +83,44 @@ export class MarketplaceService {
       });
     }
 
+    const chainId = dto.chainId || 84532;
+    const client = createPublicClient({
+      chain: getViemChain(chainId),
+      transport: http(),
+    });
+
+    let onChainListingId: number | undefined;
+
+    // Verify transaction hash
+    if (dto.txHash) {
+      try {
+        const receipt = await client.getTransactionReceipt({ hash: dto.txHash as `0x${string}` });
+        if (receipt.status !== 'success') {
+          throw new BadRequestException('Transaction failed on-chain');
+        }
+
+        // Parse TokenListed event
+        for (const log of receipt.logs) {
+          try {
+            const decoded = decodeEventLog({
+              abi: [parseAbiItem('event TokenListed(uint256 indexed listingId, address indexed nftAddress, uint256 indexed tokenId, address seller, uint256 price)')],
+              data: log.data,
+              topics: log.topics,
+            });
+            if (decoded.eventName === 'TokenListed') {
+              onChainListingId = Number(decoded.args.listingId);
+              break;
+            }
+          } catch (e) {
+            // Ignore other events
+          }
+        }
+      } catch (err) {
+        this.logger.error(`Error verifying transaction: ${err.message}`);
+        throw new BadRequestException('Invalid transaction hash or receipt not found');
+      }
+    }
+
     const created = await this.prisma.marketplaceListing.create({
       data: {
         nftAddress: dto.nftAddress,
@@ -93,22 +129,20 @@ export class MarketplaceService {
         price: dto.price,
         collectionName: dto.collectionName,
         chain: dto.chain || 'base-sepolia',
-        chainId: dto.chainId ?? (
-          dto.chain === 'base-mainnet' ? 8453 :
-          dto.chain === 'ethereum' ? 1 :
-          dto.chain === 'polygon' ? 137 :
-          dto.chain === 'arbitrum' ? 42161 :
-          dto.chain === 'optimism' ? 10 : 84532
-        ),
+        chainId,
         imageUrl: dto.imageUrl,
         name: dto.name,
         description: dto.description,
-        status: 'ACTIVE',
+        status: onChainListingId ? 'ACTIVE' : 'PENDING_LISTING',
+        listingTransactionHash: dto.txHash,
+        onChainListingId,
+        listedAt: new Date(),
       },
     });
 
     return {
       id: created.id,
+      onChainListingId: created.onChainListingId ?? undefined,
       nftAddress: created.nftAddress,
       tokenId: created.tokenId,
       seller: seller.walletAddress,
@@ -119,7 +153,7 @@ export class MarketplaceService {
       imageUrl: created.imageUrl,
       name: created.name,
       description: created.description,
-      status: 'LISTED',
+      status: created.status,
       timestamp: created.createdAt.toISOString(),
     };
   }
@@ -140,73 +174,103 @@ export class MarketplaceService {
       });
     }
 
+    const listing = await this.prisma.marketplaceListing.findUnique({ where: { id } });
+    if (!listing) throw new NotFoundException('Listing not found');
+
+    const client = createPublicClient({
+      chain: getViemChain(listing.chainId),
+      transport: http(),
+    });
+
     try {
-      const updated = await this.prisma.marketplaceListing.update({
-        where: { id },
-        data: {
-          status: 'SOLD',
-          buyerId: buyer.id,
-          txHash,
-        },
-        include: { seller: true },
-      });
-
-      // Record transaction
-      await this.prisma.transactionRecord.create({
-        data: {
-          txHash,
-          network: updated.chain,
-          type: 'BUY',
-          userId: buyer.id,
-          details: JSON.stringify({ listingId: updated.id, price: updated.price, tokenId: updated.tokenId }),
-        },
-      });
-
-      return {
-        id: updated.id,
-        nftAddress: updated.nftAddress,
-        tokenId: updated.tokenId,
-        seller: updated.seller?.walletAddress || '0x0000000000000000000000000000000000000000',
-        price: updated.price,
-        collectionName: updated.collectionName,
-        chain: updated.chain,
-        imageUrl: updated.imageUrl,
-        name: updated.name,
-        description: updated.description,
-        status: 'BOUGHT',
-        buyer: buyer.walletAddress,
-        txHash,
-        timestamp: updated.updatedAt.toISOString(),
-      };
-    } catch {
-      throw new NotFoundException(`Listing with ID ${id} not found.`);
+      const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+      if (receipt.status !== 'success') {
+        throw new BadRequestException('Transaction failed on-chain');
+      }
+    } catch (err) {
+      throw new BadRequestException('Invalid transaction hash or receipt not found');
     }
+
+    const updated = await this.prisma.marketplaceListing.update({
+      where: { id },
+      data: {
+        status: 'SOLD',
+        buyerId: buyer.id,
+        saleTransactionHash: txHash,
+        soldAt: new Date(),
+      },
+      include: { seller: true },
+    });
+
+    await this.prisma.transactionRecord.create({
+      data: {
+        txHash,
+        network: updated.chain,
+        type: 'BUY',
+        userId: buyer.id,
+        details: JSON.stringify({ listingId: updated.id, price: updated.price, tokenId: updated.tokenId }),
+      },
+    });
+
+    return {
+      id: updated.id,
+      nftAddress: updated.nftAddress,
+      tokenId: updated.tokenId,
+      seller: updated.seller?.walletAddress || '0x0000000000000000000000000000000000000000',
+      price: updated.price,
+      collectionName: updated.collectionName,
+      chain: updated.chain,
+      imageUrl: updated.imageUrl,
+      name: updated.name,
+      description: updated.description,
+      status: updated.status,
+      buyer: buyer.walletAddress,
+      txHash,
+      timestamp: updated.updatedAt.toISOString(),
+    };
   }
 
-  async cancel(id: string): Promise<ListingRecord> {
-    try {
-      const updated = await this.prisma.marketplaceListing.update({
-        where: { id },
-        data: { status: 'CANCELLED' },
-        include: { seller: true },
-      });
+  async cancel(id: string, txHash: string): Promise<ListingRecord> {
+    const listing = await this.prisma.marketplaceListing.findUnique({ where: { id }, include: { seller: true } });
+    if (!listing) throw new NotFoundException('Listing not found');
 
-      return {
-        id: updated.id,
-        nftAddress: updated.nftAddress,
-        tokenId: updated.tokenId,
-        seller: updated.seller?.walletAddress || '0x0000000000000000000000000000000000000000',
-        price: updated.price,
-        collectionName: updated.collectionName,
-        chain: updated.chain,
-        imageUrl: updated.imageUrl,
-        name: updated.name,
-        description: updated.description,
-        status: 'CANCELLED',
-        timestamp: updated.updatedAt.toISOString(),
-      };
-    } catch {
-      throw new NotFoundException(`Listing with ID ${id} not found.`);
+    const client = createPublicClient({
+      chain: getViemChain(listing.chainId),
+      transport: http(),
+    });
+
+    try {
+      const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+      if (receipt.status !== 'success') {
+        throw new BadRequestException('Transaction failed on-chain');
+      }
+    } catch (err) {
+      throw new BadRequestException('Invalid transaction hash or receipt not found');
     }
+
+    const updated = await this.prisma.marketplaceListing.update({
+      where: { id },
+      data: { 
+        status: 'CANCELLED',
+        cancelTransactionHash: txHash,
+        cancelledAt: new Date()
+      },
+      include: { seller: true },
+    });
+
+    return {
+      id: updated.id,
+      nftAddress: updated.nftAddress,
+      tokenId: updated.tokenId,
+      seller: updated.seller?.walletAddress || '0x0000000000000000000000000000000000000000',
+      price: updated.price,
+      collectionName: updated.collectionName,
+      chain: updated.chain,
+      imageUrl: updated.imageUrl,
+      name: updated.name,
+      description: updated.description,
+      status: updated.status,
+      timestamp: updated.updatedAt.toISOString(),
+    };
   }
 }
