@@ -34,6 +34,7 @@ describe('AuthService', () => {
       upsert: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      create: jest.fn(),
     },
     authenticationNonce: {
       create: jest.fn(),

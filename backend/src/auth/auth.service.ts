@@ -127,13 +127,19 @@ export class AuthService {
       data: { consumedAt: new Date() },
     });
 
-    // 7. Fetch user and create database-backed session
-    const user = await this.prisma.user.findUnique({
+    // 7. Fetch user and create database-backed session (register if not exists)
+    let user = await this.prisma.user.findUnique({
       where: { walletAddress: normalizedAddress },
     });
 
     if (!user) {
-      throw new UnauthorizedException('User account not found.');
+      user = await this.prisma.user.create({
+        data: {
+          walletAddress: normalizedAddress,
+          displayName: `Creator ${walletAddress.substring(0, 6)}`,
+          role: 'CREATOR',
+        },
+      });
     }
 
     const sessionToken = crypto.randomBytes(32).toString('hex');
