@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, Get, Param, Query, Delete, Req, UseGuards, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, Get, Param, Query, Delete, Req, UseGuards, UnauthorizedException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiProperty, ApiHeader } from '@nestjs/swagger';
 import { AiStudioService, CustomMetadataDto } from './ai-studio.service';
 import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
@@ -146,8 +146,8 @@ export class AiStudioController {
     @Query('walletAddress') walletAddress: string,
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
-    @Query('status') status?: string,
-    @Req() req: any
+    @Req() req: any,
+    @Query('status') status?: string
   ) {
     if (!walletAddress) {
       throw new BadRequestException('walletAddress is required');
