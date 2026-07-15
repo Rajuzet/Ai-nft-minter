@@ -2,6 +2,11 @@ import { NestFactory } from '@nestjs/core';
 import { NewsModule } from './news.module';
 import { NewsService } from './news.service';
 import { Logger } from '@nestjs/common';
+import * as dotenv from 'dotenv';
+import { validateEnv } from '../common/env.validation';
+
+dotenv.config();
+validateEnv();
 
 async function bootstrap() {
   const logger = new Logger('StandaloneNewsSync');

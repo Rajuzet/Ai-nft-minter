@@ -428,10 +428,10 @@ export class DefiService {
   }
 
   async getSwapQuote(request: SwapQuoteRequest): Promise<SwapQuoteResult> {
-    // Safety check on router / mock configurations
-    if (process.env.SWAP_MOCK === 'true' || request.chainId === 84532) {
-      this.logger.log(`Using mock swap quote fallback for chain ${request.chainId}`);
-      
+    // Explicit development-only mock: must set SWAP_MOCK=true in environment
+    if (process.env.SWAP_MOCK === 'true') {
+      this.logger.warn(`[DEV ONLY] SWAP_MOCK=true — returning simulated swap quote for chain ${request.chainId}`);
+
       const expectedOut = (parseFloat(formatUnits(BigInt(request.sellAmount), 18)) * 3500).toString();
       const minOut = (parseFloat(expectedOut) * 0.995).toString();
 
@@ -448,15 +448,17 @@ export class DefiService {
         estimatedGas: '150000',
         estimatedGasCostEth: '0.00015',
         route: `${request.sellToken === 'NATIVE' ? 'ETH' : 'ERC20'} -> MockPool -> WGT`,
-        allowanceTarget: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24', // Mock Spender
+        allowanceTarget: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
         transactionTarget: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
         transactionCalldata: '0x',
         transactionValue: request.sellToken === 'NATIVE' ? request.sellAmount : '0',
         quoteExpiration: Math.floor(Date.now() / 1000) + 300,
         generatedTimestamp: Date.now(),
+        warnings: ['SWAP_MOCK=true: This quote is simulated and not executable on-chain.'],
       };
     }
 
+    // All chains (including testnet 84532) route through the real swap aggregator
     return this.openoceanSwapProvider.getQuote(request);
   }
 

@@ -4,31 +4,47 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { PrismaService } from './prisma/prisma.service';
+import { validateEnv } from './common/env.validation';
+import helmet from 'helmet';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
+validateEnv();
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
+
+  // Security headers via Helmet
+  app.use(helmet({
+    contentSecurityPolicy: false, // Allow inline scripts for Swagger UI
+    crossOriginEmbedderPolicy: false,
+  }));
 
   // Register Global Exception Filter for clear error logging
   app.useGlobalFilters(new AllExceptionsFilter());
 
   // Configure CORS allowing frontend origins
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    frontendUrl,
+  ];
+
   app.enableCors({
     origin: (origin, callback) => {
       if (
         !origin ||
-        origin === 'http://localhost:3000' ||
-        origin === 'http://127.0.0.1:3000' ||
-        origin === frontendUrl ||
+        allowedOrigins.includes(origin) ||
         /\.vercel\.app$/.test(origin)
       ) {
         callback(null, true);
+      } else if (process.env.NODE_ENV !== 'production') {
+        // Allow all origins in non-production for development convenience
+        callback(null, true);
       } else {
-        callback(null, true); // Allow all in dev mode for maximum compatibility
+        callback(new Error(`CORS policy: origin ${origin} is not allowed`), false);
       }
     },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
@@ -36,7 +52,11 @@ async function bootstrap() {
     allowedHeaders: 'Content-Type, Accept, Authorization',
   });
 
-  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+  app.useGlobalPipes(new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true,
+  }));
 
   // Register Health & Status Endpoints (GET /health, GET /api/health, GET /api/status, GET /api/v1/health)
   const httpAdapter = app.getHttpAdapter();

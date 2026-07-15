@@ -38,6 +38,14 @@ const WcosGovernorABI = [
     name: 'ProposalCanceled',
     inputs: [{ indexed: true, name: 'proposalId', type: 'uint256' }],
   },
+  {
+    type: 'event',
+    name: 'ProposalQueued',
+    inputs: [
+      { indexed: true, name: 'proposalId', type: 'uint256' },
+      { indexed: false, name: 'eta', type: 'uint256' },
+    ],
+  },
 ] as const;
 
 const WcosGovernanceTokenABI = [
@@ -185,6 +193,31 @@ describe('IndexerService', () => {
       data: '0x',
       transactionHash: '0xhashExec',
       blockNumber: '0x65',
+      logIndex: '0x0',
+      address: '0xgov123',
+    });
+
+    expect(result).toBe(true);
+    expect(mockPrismaService.daoProposal.update).toHaveBeenCalled();
+  });
+
+  it('should process ProposalQueued event', async () => {
+    const topics = encodeEventTopics({
+      abi: WcosGovernorABI,
+      eventName: 'ProposalQueued',
+      args: [1n],
+    });
+
+    const data = encodeAbiParameters(
+      parseAbiParameters('uint256 eta'),
+      [172800n]
+    );
+
+    const result = await service.processLog({
+      topics,
+      data,
+      transactionHash: '0xhashQueue',
+      blockNumber: '0x66',
       logIndex: '0x0',
       address: '0xgov123',
     });

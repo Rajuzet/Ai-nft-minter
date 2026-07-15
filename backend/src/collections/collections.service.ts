@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CollectionRecord {
@@ -41,14 +41,18 @@ export class CollectionsService {
     timestamp: new Date().toISOString(),
   };
 
-  async create(dto: Omit<CollectionRecord, 'id' | 'timestamp'>): Promise<CollectionRecord> {
-    // Find default system user or create one for orphaned collections
-    let user = await this.prisma.user.findFirst();
+  async create(dto: Omit<CollectionRecord, 'id' | 'timestamp'>, ownerWalletAddress?: string): Promise<CollectionRecord> {
+    const wallet = ownerWalletAddress ? ownerWalletAddress.toLowerCase() : '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266';
+    
+    let user = await this.prisma.user.findUnique({
+      where: { walletAddress: wallet },
+    });
+
     if (!user) {
       user = await this.prisma.user.create({
         data: {
-          walletAddress: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
-          displayName: 'System Creator',
+          walletAddress: wallet,
+          displayName: `Creator ${wallet.substring(0, 6)}`,
         },
       });
     }
@@ -143,35 +147,44 @@ export class CollectionsService {
     }));
   }
 
-  async deploy(id: string, contractAddress: string): Promise<CollectionRecord> {
-    try {
-      const updated = await this.prisma.nftCollection.update({
-        where: { id },
-        data: {
-          contractAddress,
-          status: 'DEPLOYED',
-        },
-      });
+  async deploy(id: string, contractAddress: string, ownerWalletAddress?: string): Promise<CollectionRecord> {
+    const collection = await this.prisma.nftCollection.findUnique({
+      where: { id },
+      include: { owner: true },
+    });
 
-      return {
-        id: updated.id,
-        name: updated.name,
-        symbol: updated.symbol,
-        description: updated.description || '',
-        logoUrl: updated.coverImage || this.defaultCollection.logoUrl,
-        bannerUrl: this.defaultCollection.bannerUrl,
-        category: 'art',
-        royaltyPercentage: updated.royaltyBps / 100,
-        royaltyReceiver: '0x0000000000000000000000000000000000000000',
-        maxSupply: updated.maxSupply,
-        chain: updated.network,
-        contractType: 'ERC-721',
-        contractAddress: updated.contractAddress,
-        status: 'DEPLOYED',
-        timestamp: updated.createdAt.toISOString(),
-      };
-    } catch {
+    if (!collection) {
       throw new NotFoundException(`Collection with ID ${id} not found.`);
     }
+
+    if (ownerWalletAddress && collection.owner?.walletAddress.toLowerCase() !== ownerWalletAddress.toLowerCase()) {
+      throw new ForbiddenException('You do not own this collection.');
+    }
+
+    const updated = await this.prisma.nftCollection.update({
+      where: { id },
+      data: {
+        contractAddress,
+        status: 'DEPLOYED',
+      },
+    });
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      symbol: updated.symbol,
+      description: updated.description || '',
+      logoUrl: updated.coverImage || this.defaultCollection.logoUrl,
+      bannerUrl: this.defaultCollection.bannerUrl,
+      category: 'art',
+      royaltyPercentage: updated.royaltyBps / 100,
+      royaltyReceiver: '0x0000000000000000000000000000000000000000',
+      maxSupply: updated.maxSupply,
+      chain: updated.network,
+      contractType: 'ERC-721',
+      contractAddress: updated.contractAddress,
+      status: 'DEPLOYED',
+      timestamp: updated.createdAt.toISOString(),
+    };
   }
 }

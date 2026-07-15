@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { createPublicClient, http, decodeEventLog, parseAbiItem } from 'viem';
 import { baseSepolia, base, mainnet, polygon, arbitrum, optimism } from 'viem/chains';
@@ -230,9 +230,13 @@ export class MarketplaceService {
     };
   }
 
-  async cancel(id: string, txHash: string): Promise<ListingRecord> {
+  async cancel(id: string, txHash: string, sellerWalletAddress?: string): Promise<ListingRecord> {
     const listing = await this.prisma.marketplaceListing.findUnique({ where: { id }, include: { seller: true } });
     if (!listing) throw new NotFoundException('Listing not found');
+
+    if (sellerWalletAddress && listing.seller?.walletAddress.toLowerCase() !== sellerWalletAddress.toLowerCase()) {
+      throw new ForbiddenException('You do not own this listing and cannot cancel it.');
+    }
 
     const client = createPublicClient({
       chain: getViemChain(listing.chainId),

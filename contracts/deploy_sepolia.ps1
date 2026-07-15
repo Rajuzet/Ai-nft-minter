@@ -1,7 +1,7 @@
 # Deploy AINFTMinter to Base Sepolia Testnet
 # Usage: .\deploy_sepolia.ps1
 
-$ForgePath = "$env:USERPROFILE\.foundry\bin\forge.exe"
+$ForgePath = "$PSScriptRoot\..\.foundry\forge.exe"
 $EnvFile = "$PSScriptRoot\.env"
 
 # Load environment variables from .env file
@@ -32,13 +32,13 @@ if (-not $rpcUrl) {
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Deploying AINFTMinter to Base Sepolia" -ForegroundColor Cyan
+Write-Host "  Deploying WCOS Smart Contracts to Base Sepolia" -ForegroundColor Cyan
 Write-Host "  RPC: $rpcUrl" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Run forge deployment
-& $ForgePath script script/DeployAINFTMinter.s.sol `
+& $ForgePath script script/DeployAll.s.sol `
     --rpc-url $rpcUrl `
     --broadcast `
     --private-key $privateKey `
@@ -60,8 +60,8 @@ if ($LASTEXITCODE -eq 0) {
             --chain-id 84532 `
             --etherscan-api-key $basescanKey `
             --rpc-url $rpcUrl `
-            $(& $ForgePath script script/DeployAINFTMinter.s.sol --json | ConvertFrom-Json | Select-Object -ExpandProperty deployments | Select-Object -First 1 | Select-Object -ExpandProperty address) `
-            src/AINFTMinter.sol:AINFTMinter
+            $(& $ForgePath script script/DeployAll.s.sol --json | ConvertFrom-Json | Select-Object -ExpandProperty deployments | Select-Object -First 1 | Select-Object -ExpandProperty address) `
+            src/WcosGovernanceToken.sol:WcosGovernanceToken
     }
 } else {
     Write-Error "Deployment failed. Check forge output above for errors."

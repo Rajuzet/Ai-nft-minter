@@ -1,7 +1,8 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, Get, Param, Query, Delete, Request, UseGuards, UnauthorizedException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiProperty } from '@nestjs/swagger';
+import { Controller, Post, Body, HttpCode, HttpStatus, Get, Param, Query, Delete, Req, UseGuards, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiProperty, ApiHeader } from '@nestjs/swagger';
 import { AiStudioService, CustomMetadataDto } from './ai-studio.service';
-import { IsNotEmpty, IsString, IsOptional, IsNumber } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 class CustomMetadataInputDto implements CustomMetadataDto {
   @ApiProperty({ description: 'NFT metadata name', required: false })
@@ -110,46 +111,69 @@ export class AiStudioController {
   }
 
   @Post('api/v1/ai/generate')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Generate AI Art and queue for upload' })
-  async generateArt(@Body() dto: GenerateArtDto) {
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  async generateArt(@Body() dto: GenerateArtDto, @Req() req: any) {
+    if (dto.walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Requested wallet address does not match authenticated session.');
+    }
     return this.aiStudioService.generateArt(
       dto,
       dto.customMetadata,
-      dto.walletAddress
+      req.user.walletAddress
     );
   }
 
   @Get('api/v1/ai/generation/:id')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get generation status by ID' })
-  async getGenerationStatus(@Param('id') id: string) {
-    return this.aiStudioService.getGenerationStatus(id);
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  async getGenerationStatus(@Param('id') id: string, @Req() req: any) {
+    const asset = await this.aiStudioService.getGenerationStatus(id);
+    if (asset.walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Access denied. You do not own this generation asset.');
+    }
+    return asset;
   }
 
   @Get('api/v1/ai/history')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get user generation history' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   async getGenerationHistory(
     @Query('walletAddress') walletAddress: string,
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
-    @Query('status') status?: string
+    @Query('status') status?: string,
+    @Req() req: any
   ) {
     if (!walletAddress) {
-        throw new UnauthorizedException('walletAddress is required');
+      throw new BadRequestException('walletAddress is required');
+    }
+    if (walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Access denied. You can only view your own generation history.');
     }
     return this.aiStudioService.getUserHistory(walletAddress, parseInt(page), parseInt(limit), status);
   }
 
   @Delete('api/v1/ai/generation/:id')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete a draft generation' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   async deleteDraft(
     @Param('id') id: string,
-    @Query('walletAddress') walletAddress: string
+    @Query('walletAddress') walletAddress: string,
+    @Req() req: any
   ) {
     if (!walletAddress) {
-      throw new UnauthorizedException('walletAddress is required');
+      throw new BadRequestException('walletAddress is required');
     }
-    return this.aiStudioService.deleteDraft(id, walletAddress);
+    if (walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Access denied. You can only delete your own draft generations.');
+    }
+    return this.aiStudioService.deleteDraft(id, req.user.walletAddress);
   }
 }

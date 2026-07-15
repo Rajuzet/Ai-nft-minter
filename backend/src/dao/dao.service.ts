@@ -5,6 +5,55 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { createPublicClient, http } from 'viem';
+import { baseSepolia, base, mainnet, polygon, arbitrum, optimism } from 'viem/chains';
+
+// Governor contract ABI for on-chain state queries
+const GovernorStateABI = [
+  {
+    type: 'function',
+    name: 'state',
+    stateMutability: 'view',
+    inputs: [{ name: 'proposalId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint8' }],
+  },
+] as const;
+
+function getViemChain(chainId: number) {
+  switch (chainId) {
+    case 8453: return base;
+    case 1: return mainnet;
+    case 137: return polygon;
+    case 42161: return arbitrum;
+    case 10: return optimism;
+    case 84532:
+    default: return baseSepolia;
+  }
+}
+
+function getRpcUrl(chainId: number): string {
+  switch (chainId) {
+    case 84532: return process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';
+    case 8453: return process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
+    case 1: return process.env.ETH_MAINNET_RPC_URL || 'https://eth.llamarpc.com';
+    case 137: return process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com';
+    case 42161: return process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc';
+    case 10: return process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io';
+    default: return process.env.RPC_URL || 'https://sepolia.base.org';
+  }
+}
+
+// OpenZeppelin Governor state enum mapping
+const GOVERNOR_STATE_MAP: Record<number, string> = {
+  0: 'PENDING',
+  1: 'ACTIVE',
+  2: 'CANCELED',
+  3: 'DEFEATED',
+  4: 'SUCCEEDED',
+  5: 'QUEUED',
+  6: 'EXPIRED',
+  7: 'EXECUTED',
+};
 
 // ─── DTOs ──────────────────────────────────────────────────────────────────────
 
@@ -105,6 +154,55 @@ export class DaoService {
   private readonly logger = new Logger(DaoService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  // ─── On-Chain State Sync ───────────────────────────────────────────────────
+
+  /**
+   * Query the Governor contract on-chain for the current state of a proposal
+   * and synchronize it with the database record.
+   */
+  async syncProposalStateFromChain(onChainProposalId: string, chainId: number): Promise<string | null> {
+    const config = buildChainConfig(chainId);
+    if (!config.governorContract) {
+      this.logger.warn(`No governor contract configured for chain ${chainId}`);
+      return null;
+    }
+
+    try {
+      const client = createPublicClient({
+        chain: getViemChain(chainId),
+        transport: http(getRpcUrl(chainId)),
+      });
+
+      const stateResult = await client.readContract({
+        address: config.governorContract as `0x${string}`,
+        abi: GovernorStateABI,
+        functionName: 'state',
+        args: [BigInt(onChainProposalId)],
+      });
+
+      const stateNum = Number(stateResult);
+      const status = GOVERNOR_STATE_MAP[stateNum] || 'UNKNOWN';
+
+      // Update the database record
+      const existing = await this.prisma.daoProposal.findFirst({
+        where: { proposalId: onChainProposalId, chainId },
+      });
+
+      if (existing && existing.status !== status) {
+        this.logger.log(`Syncing proposal ${onChainProposalId} state: ${existing.status} → ${status}`);
+        await this.prisma.daoProposal.update({
+          where: { id: existing.id },
+          data: { status },
+        });
+      }
+
+      return status;
+    } catch (err: any) {
+      this.logger.warn(`On-chain state query failed for proposal ${onChainProposalId}: ${err.message}`);
+      return null;
+    }
+  }
 
   // ─── Governance Config ──────────────────────────────────────────────────────
 

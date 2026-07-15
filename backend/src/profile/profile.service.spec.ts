@@ -28,6 +28,19 @@ describe('ProfileService', () => {
       create: jest.fn(),
       upsert: jest.fn(),
     },
+    nft: {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    marketplaceListing: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    transactionRecord: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    daoVote: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
   };
 
   beforeEach(async () => {

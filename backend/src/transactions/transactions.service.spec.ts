@@ -13,7 +13,7 @@ describe('TransactionsService', () => {
     transactionRecord: {
       upsert: jest.fn().mockResolvedValue({
         id: 'tx-1',
-        txHash: '0xabc123',
+        txHash: '0x1234567890123456789012345678901234567890123456789012345678901234',
         network: 'base-sepolia',
         type: 'MINT',
         status: 'CONFIRMED',
@@ -42,7 +42,7 @@ describe('TransactionsService', () => {
 
   it('should record a mint transaction hash', async () => {
     const result = await service.create({
-      txHash: '0xabc123',
+      txHash: '0x1234567890123456789012345678901234567890123456789012345678901234',
       network: 'base-sepolia',
       type: 'MINT',
       walletAddress: '0x1234567890123456789012345678901234567890',
@@ -50,7 +50,7 @@ describe('TransactionsService', () => {
     });
 
     expect(result).toBeDefined();
-    expect(result.txHash).toBe('0xabc123');
+    expect(result.txHash).toBe('0x1234567890123456789012345678901234567890123456789012345678901234');
     expect(result.type).toBe('MINT');
   });
 });

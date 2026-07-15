@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
 import "forge-std/Script.sol";
@@ -33,7 +33,8 @@ contract DeployGovernance is Script {
         WcosGovernor governor = new WcosGovernor(
             govToken,
             QUORUM_PERCENTAGE,
-            VOTING_DURATION_BLOCKS
+            VOTING_DURATION_BLOCKS,
+            address(0)
         );
         console2.log("WcosGovernor deployed at:", address(governor));
         console2.log("  NEXT_PUBLIC_WCOS_GOVERNOR_ADDRESS=%s", address(governor));

@@ -4,9 +4,16 @@ pragma solidity 0.8.20;
 import "./WcosGovernanceToken.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+interface ITimelock {
+    function getMinDelay() external view returns (uint256);
+    function schedule(address target, uint256 value, bytes calldata data, bytes32 predecessor, bytes32 salt, uint256 delay) external;
+    function execute(address target, uint256 value, bytes calldata data, bytes32 predecessor, bytes32 salt) external payable;
+    function cancel(bytes32 id) external;
+}
+
 contract WcosGovernor is ReentrancyGuard {
     
-    enum ProposalState { Pending, Active, Defeated, Succeeded, Executed, Canceled }
+    enum ProposalState { Pending, Active, Defeated, Succeeded, Queued, Executed, Canceled }
 
     struct Proposal {
         address proposer;
@@ -20,25 +27,30 @@ contract WcosGovernor is ReentrancyGuard {
         uint256 againstVotes;
         bool executed;
         bool canceled;
+        bool queued;
+        uint256 eta;
     }
 
     WcosGovernanceToken public token;
     uint256 public proposalCount;
     uint256 public quorumPercentage; // e.g. 10 = 10%
     uint256 public votingDurationBlocks; // e.g. 5760 = ~1 day
+    address public timelock;
 
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
 
     event ProposalCreated(uint256 indexed proposalId, address indexed proposer, address target, uint256 value, string description, uint256 startBlock, uint256 endBlock);
     event VoteCast(address indexed voter, uint256 indexed proposalId, bool support, uint256 weight);
+    event ProposalQueued(uint256 indexed proposalId, uint256 eta);
     event ProposalExecuted(uint256 indexed proposalId);
     event ProposalCanceled(uint256 indexed proposalId);
 
-    constructor(WcosGovernanceToken _token, uint256 _quorumPercentage, uint256 _votingDurationBlocks) {
+    constructor(WcosGovernanceToken _token, uint256 _quorumPercentage, uint256 _votingDurationBlocks, address _timelock) {
         token = _token;
         quorumPercentage = _quorumPercentage;
         votingDurationBlocks = _votingDurationBlocks;
+        timelock = _timelock;
     }
 
     function propose(
@@ -64,7 +76,9 @@ contract WcosGovernor is ReentrancyGuard {
             forVotes: 0,
             againstVotes: 0,
             executed: false,
-            canceled: false
+            canceled: false,
+            queued: false,
+            eta: 0
         });
 
         emit ProposalCreated(proposalId, msg.sender, target, value, description, block.number, block.number + votingDurationBlocks);
@@ -77,11 +91,10 @@ contract WcosGovernor is ReentrancyGuard {
         require(block.number >= proposal.startBlock && block.number <= proposal.endBlock, "WcosGovernor: voting closed");
         require(!hasVoted[proposalId][msg.sender], "WcosGovernor: already voted");
 
-        uint256 weight = token.getPastVotes(msg.sender, proposal.startBlock);
+        uint256 snapshotBlock = proposal.startBlock > 0 ? proposal.startBlock - 1 : 0;
+        uint256 weight = token.getPastVotes(msg.sender, snapshotBlock);
         if (weight == 0) {
             // Fallback to current balance if no checkpoint block resolved.
-            // NOTE: This is a known economic risk (flash-loan voting). Use delegation
-            // before snapshot block to ensure proper weight is captured.
             weight = token.balanceOf(msg.sender);
         }
         require(weight > 0, "WcosGovernor: no voting weight");
@@ -94,6 +107,30 @@ contract WcosGovernor is ReentrancyGuard {
 
         hasVoted[proposalId][msg.sender] = true;
         emit VoteCast(msg.sender, proposalId, support, weight);
+    }
+
+    /// @notice Queue a successful proposal. Only required when timelock is integrated.
+    function queue(uint256 proposalId) external {
+        require(timelock != address(0), "WcosGovernor: timelock not configured");
+        require(state(proposalId) == ProposalState.Succeeded, "WcosGovernor: proposal cannot be queued");
+        
+        Proposal storage proposal = proposals[proposalId];
+        proposal.queued = true;
+
+        uint256 eta = block.timestamp + ITimelock(timelock).getMinDelay();
+        proposal.eta = eta;
+
+        bytes32 salt = bytes32(proposalId);
+        ITimelock(timelock).schedule(
+            proposal.target,
+            proposal.value,
+            proposal.data,
+            bytes32(0), // predecessor
+            salt,
+            ITimelock(timelock).getMinDelay()
+        );
+
+        emit ProposalQueued(proposalId, eta);
     }
 
     /// @notice Cancel a proposal. Only callable by the original proposer.
@@ -112,23 +149,38 @@ contract WcosGovernor is ReentrancyGuard {
 
     function execute(uint256 proposalId) external payable nonReentrant {
         Proposal storage proposal = proposals[proposalId];
-        require(!proposal.canceled, "WcosGovernor: proposal canceled");
-        require(block.number > proposal.endBlock, "WcosGovernor: voting still active");
-        require(!proposal.executed, "WcosGovernor: already executed");
-
-        uint256 totalVotes = proposal.forVotes + proposal.againstVotes;
-        uint256 totalSupply = token.totalSupply();
-        uint256 quorum = (totalSupply * quorumPercentage) / 100;
-
-        require(totalVotes >= quorum, "WcosGovernor: quorum not met");
-        require(proposal.forVotes > proposal.againstVotes, "WcosGovernor: proposal defeated");
-
-        proposal.executed = true;
         
-        // Execute target transaction payload (skip if target is zero address)
-        if (proposal.target != address(0) && (proposal.data.length > 0 || proposal.value > 0)) {
-            (bool success, ) = proposal.target.call{value: proposal.value}(proposal.data);
-            require(success, "WcosGovernor: transaction execution failed");
+        if (timelock != address(0)) {
+            require(state(proposalId) == ProposalState.Queued, "WcosGovernor: proposal not queued");
+            require(block.timestamp >= proposal.eta, "WcosGovernor: timelock delay not passed");
+            proposal.executed = true;
+
+            bytes32 salt = bytes32(proposalId);
+            ITimelock(timelock).execute{value: msg.value}(
+                proposal.target,
+                proposal.value,
+                proposal.data,
+                bytes32(0), // predecessor
+                salt
+            );
+        } else {
+            require(!proposal.canceled, "WcosGovernor: proposal canceled");
+            require(block.number > proposal.endBlock, "WcosGovernor: voting still active");
+            require(!proposal.executed, "WcosGovernor: already executed");
+
+            uint256 totalVotes = proposal.forVotes + proposal.againstVotes;
+            uint256 totalSupply = token.totalSupply();
+            uint256 quorum = (totalSupply * quorumPercentage) / 100;
+
+            require(totalVotes >= quorum, "WcosGovernor: quorum not met");
+            require(proposal.forVotes > proposal.againstVotes, "WcosGovernor: proposal defeated");
+
+            proposal.executed = true;
+
+            if (proposal.target != address(0) && (proposal.data.length > 0 || proposal.value > 0)) {
+                (bool success, ) = proposal.target.call{value: proposal.value}(proposal.data);
+                require(success, "WcosGovernor: transaction execution failed");
+            }
         }
 
         emit ProposalExecuted(proposalId);
@@ -145,7 +197,7 @@ contract WcosGovernor is ReentrancyGuard {
         return (p.forVotes, p.againstVotes);
     }
 
-    function state(uint256 proposalId) external view returns (ProposalState) {
+    function state(uint256 proposalId) public view returns (ProposalState) {
         Proposal storage proposal = proposals[proposalId];
         if (proposal.canceled) {
             return ProposalState.Canceled;
@@ -163,6 +215,9 @@ contract WcosGovernor is ReentrancyGuard {
         uint256 quorum = (token.totalSupply() * quorumPercentage) / 100;
         if (totalVotes < quorum || proposal.forVotes <= proposal.againstVotes) {
             return ProposalState.Defeated;
+        }
+        if (proposal.queued) {
+            return ProposalState.Queued;
         }
         return ProposalState.Succeeded;
     }

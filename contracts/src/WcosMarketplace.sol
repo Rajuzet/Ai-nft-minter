@@ -4,9 +4,10 @@ pragma solidity 0.8.20;
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/interfaces/IERC2981.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-contract WcosMarketplace is ReentrancyGuard, Ownable {
+contract WcosMarketplace is ReentrancyGuard, Ownable2Step, Pausable {
     
     uint256 private _listingIds;
 
@@ -19,14 +20,44 @@ contract WcosMarketplace is ReentrancyGuard, Ownable {
         bool active;
     }
 
+    uint256 public feeBps;
+    uint256 public constant maxFeeBps = 1000; // 10% cap
+    address public feeRecipient;
+
     // Mapping from listingId => Listing
     mapping(uint256 => Listing) public listings;
 
     event TokenListed(uint256 indexed listingId, address indexed nftAddress, uint256 indexed tokenId, address seller, uint256 price);
-    event TokenBought(uint256 indexed listingId, address indexed nftAddress, uint256 indexed tokenId, address buyer, address seller, uint256 price, uint256 royaltyPaid);
+    event TokenBought(uint256 indexed listingId, address indexed nftAddress, uint256 indexed tokenId, address buyer, address seller, uint256 price, uint256 royaltyPaid, uint256 feePaid);
     event TokenListingCancelled(uint256 indexed listingId, address indexed nftAddress, uint256 indexed tokenId, address seller);
+    event MarketplaceFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps);
+    event MarketplaceFeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
 
-    function listToken(address nftAddress, uint256 tokenId, uint256 price) external nonReentrant returns (uint256) {
+    constructor() {
+        feeRecipient = msg.sender;
+    }
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    function setFeeBps(uint256 _feeBps) external onlyOwner {
+        require(_feeBps <= maxFeeBps, "WcosMarketplace: fee exceeds max limit");
+        emit MarketplaceFeeUpdated(feeBps, _feeBps);
+        feeBps = _feeBps;
+    }
+
+    function setFeeRecipient(address _feeRecipient) external onlyOwner {
+        require(_feeRecipient != address(0), "WcosMarketplace: invalid fee recipient");
+        emit MarketplaceFeeRecipientUpdated(feeRecipient, _feeRecipient);
+        feeRecipient = _feeRecipient;
+    }
+
+    function listToken(address nftAddress, uint256 tokenId, uint256 price) external whenNotPaused nonReentrant returns (uint256) {
         require(price > 0, "WcosMarketplace: price must be greater than zero");
         
         IERC721 nft = IERC721(nftAddress);
@@ -51,7 +82,7 @@ contract WcosMarketplace is ReentrancyGuard, Ownable {
         return newListingId;
     }
 
-    function buyToken(uint256 listingId) external payable nonReentrant {
+    function buyToken(uint256 listingId) external payable whenNotPaused nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "WcosMarketplace: listing is not active");
         require(msg.value >= listing.price, "WcosMarketplace: insufficient payment");
@@ -70,24 +101,36 @@ contract WcosMarketplace is ReentrancyGuard, Ownable {
             }
         } catch {}
 
+        uint256 feeAmount = (salePrice * feeBps) / 10000;
+        require(royaltyAmount + feeAmount < salePrice, "WcosMarketplace: royalties and fees exceed price");
+
+        // Pay fee if resolved
+        if (feeAmount > 0 && feeRecipient != address(0)) {
+            (bool feeOk, ) = payable(feeRecipient).call{value: feeAmount}("");
+            require(feeOk, "WcosMarketplace: fee payment failed");
+        }
+
         // Pay royalties if resolved
         if (royaltyReceiver != address(0) && royaltyAmount > 0) {
-            payable(royaltyReceiver).transfer(royaltyAmount);
+            (bool royaltyOk, ) = payable(royaltyReceiver).call{value: royaltyAmount}("");
+            require(royaltyOk, "WcosMarketplace: royalty payment failed");
         }
 
         // Pay remainder to seller
-        uint256 sellerProceeds = salePrice - royaltyAmount;
-        payable(listing.seller).transfer(sellerProceeds);
+        uint256 sellerProceeds = salePrice - royaltyAmount - feeAmount;
+        (bool sellerOk, ) = payable(listing.seller).call{value: sellerProceeds}("");
+        require(sellerOk, "WcosMarketplace: seller payment failed");
 
         // Refund excess payment
         if (msg.value > salePrice) {
-            payable(msg.sender).transfer(msg.value - salePrice);
+            (bool refundOk, ) = payable(msg.sender).call{value: msg.value - salePrice}("");
+            require(refundOk, "WcosMarketplace: refund failed");
         }
 
         // Transfer NFT from escrow to buyer
         IERC721(listing.nftAddress).safeTransferFrom(address(this), msg.sender, listing.tokenId);
 
-        emit TokenBought(listingId, listing.nftAddress, listing.tokenId, msg.sender, listing.seller, salePrice, royaltyAmount);
+        emit TokenBought(listingId, listing.nftAddress, listing.tokenId, msg.sender, listing.seller, salePrice, royaltyAmount, feeAmount);
     }
 
     function cancelListing(uint256 listingId) external nonReentrant {

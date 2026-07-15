@@ -3,6 +3,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { SiweMessage } from 'siwe';
+import * as crypto from 'crypto';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -12,8 +13,19 @@ describe('AuthService', () => {
     walletAddress: '0x1234567890123456789012345678901234567890',
     displayName: 'Creator 0x1234',
     avatarUrl: 'https://api.dicebear.com/7.x/identicon/svg?seed=0x1234567890123456789012345678901234567890',
-    nonce: 'securesiwenonce999',
     role: 'CREATOR',
+    createdAt: new Date(),
+  };
+
+  const mockNonceRecord = {
+    id: 'nonce-id-999',
+    walletAddress: '0x1234567890123456789012345678901234567890',
+    normalizedWallet: '0x1234567890123456789012345678901234567890',
+    nonceHash: crypto.createHash('sha256').update('securesiwenonce999').digest('hex'),
+    domain: 'localhost:3000',
+    chainId: 84532,
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes expiration
+    consumedAt: null,
     createdAt: new Date(),
   };
 
@@ -22,8 +34,19 @@ describe('AuthService', () => {
       upsert: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+    },
+    authenticationNonce: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    session: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
       updateMany: jest.fn(),
     },
+    safe: jest.fn((callback) => callback()),
   };
 
   beforeEach(async () => {
@@ -50,11 +73,12 @@ describe('AuthService', () => {
       expect(result.nonce.length).toBeGreaterThan(10);
     });
 
-    it('should upsert user with the generated nonce', async () => {
+    it('should upsert user and store nonce record in DB', async () => {
       const address = '0x1234567890123456789012345678901234567890';
       const normalized = address.toLowerCase();
 
       mockPrismaService.user.upsert.mockResolvedValue(mockUser);
+      mockPrismaService.authenticationNonce.create.mockResolvedValue(mockNonceRecord);
 
       const result = await service.getNonce(address);
 
@@ -63,18 +87,25 @@ describe('AuthService', () => {
         where: { walletAddress: normalized },
         create: {
           walletAddress: normalized,
-          nonce: expect.any(String),
           displayName: 'Creator 0x1234',
+          role: 'CREATOR',
         },
-        update: {
-          nonce: expect.any(String),
+        update: {},
+      });
+      expect(mockPrismaService.authenticationNonce.create).toHaveBeenCalledWith({
+        data: {
+          walletAddress: address,
+          normalizedWallet: normalized,
+          nonceHash: expect.any(String),
+          domain: 'localhost:3000',
+          expiresAt: expect.any(Date),
         },
       });
     });
   });
 
   describe('verifySignature', () => {
-    const validMessage = new SiweMessage({
+    const validMessageObj = new SiweMessage({
       domain: 'localhost:3000',
       address: mockUser.walletAddress,
       statement: 'Sign in to AI NFT Studio Collective (WCOS).',
@@ -83,33 +114,25 @@ describe('AuthService', () => {
       chainId: 84532,
       nonce: 'securesiwenonce999',
       issuedAt: new Date().toISOString(),
-    }).prepareMessage();
+    });
+    const validMessage = validMessageObj.prepareMessage();
 
     it('should throw BadRequestException if address or signature is missing', async () => {
       await expect(
-        service.verifySignature({ walletAddress: '', signature: '0xsig' }),
+        service.verifySignature({ walletAddress: '', signature: '0xsig', message: validMessage }),
       ).rejects.toThrow(BadRequestException);
 
       await expect(
-        service.verifySignature({ walletAddress: '0x1234', signature: '' }),
+        service.verifySignature({ walletAddress: '0x1234', signature: '', message: validMessage }),
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should throw UnauthorizedException if user does not exist in DB', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(null);
-
-      await expect(
-        service.verifySignature({
-          walletAddress: '0x1234567890123456789012345678901234567890',
-          signature: '0xsig',
-          message: validMessage,
-        }),
-      ).rejects.toThrow(UnauthorizedException);
-    });
-
-    it('should throw UnauthorizedException if nonce has expired or already been used', async () => {
-      const userWithoutNonce = { ...mockUser, nonce: null };
-      mockPrismaService.user.findUnique.mockResolvedValue(userWithoutNonce);
+    it('should throw UnauthorizedException if nonce has expired', async () => {
+      const expiredNonceRecord = {
+        ...mockNonceRecord,
+        expiresAt: new Date(Date.now() - 1000), // 1 second ago
+      };
+      mockPrismaService.authenticationNonce.findUnique.mockResolvedValue(expiredNonceRecord);
 
       await expect(
         service.verifySignature({
@@ -120,24 +143,34 @@ describe('AuthService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('should throw UnauthorizedException if message nonce does not match DB nonce', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-      const invalidNonceMessage = validMessage.replace('securesiwenonce999', 'differentnonce');
+    it('should throw UnauthorizedException if nonce has already been consumed', async () => {
+      const consumedNonceRecord = {
+        ...mockNonceRecord,
+        consumedAt: new Date(),
+      };
+      mockPrismaService.authenticationNonce.findUnique.mockResolvedValue(consumedNonceRecord);
 
       await expect(
         service.verifySignature({
           walletAddress: mockUser.walletAddress,
           signature: '0xsig',
-          message: invalidNonceMessage,
+          message: validMessage,
         }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('should successfully verify SIWE signature and return JWT token + user details', async () => {
+    it('should successfully verify SIWE signature, consume nonce and register session', async () => {
+      mockPrismaService.authenticationNonce.findUnique.mockResolvedValue(mockNonceRecord);
+      mockPrismaService.authenticationNonce.update.mockResolvedValue({
+        ...mockNonceRecord,
+        consumedAt: new Date(),
+      });
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-      mockPrismaService.user.update.mockResolvedValue({
-        ...mockUser,
-        nonce: null,
+      mockPrismaService.session.create.mockResolvedValue({
+        id: 'session-uuid-1',
+        sessionToken: 'hashed-session-token',
+        userId: mockUser.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       });
 
       // Spy on SiweMessage prototype verify method to mock EIP-4361 signature verification
@@ -147,7 +180,8 @@ describe('AuthService', () => {
           success: true,
           data: {
             address: mockUser.walletAddress,
-            nonce: mockUser.nonce,
+            nonce: 'securesiwenonce999',
+            domain: 'localhost:3000',
           } as any,
         });
 
@@ -169,9 +203,18 @@ describe('AuthService', () => {
       });
 
       // Nonce cleared check to prevent replay attacks
-      expect(mockPrismaService.user.update).toHaveBeenCalledWith({
-        where: { id: mockUser.id },
-        data: { nonce: null },
+      expect(mockPrismaService.authenticationNonce.update).toHaveBeenCalledWith({
+        where: { id: mockNonceRecord.id },
+        data: { consumedAt: expect.any(Date) },
+      });
+
+      // Session registered check
+      expect(mockPrismaService.session.create).toHaveBeenCalledWith({
+        data: {
+          sessionToken: expect.any(String),
+          userId: mockUser.id,
+          expiresAt: expect.any(Date),
+        },
       });
 
       verifySpy.mockRestore();
@@ -179,15 +222,11 @@ describe('AuthService', () => {
   });
 
   describe('logout', () => {
-    it('should clear user nonce in database', async () => {
-      mockPrismaService.user.updateMany.mockResolvedValue({ count: 1 });
-      const result = await service.logout(mockUser.walletAddress);
-
+    it('should revoke active session in database', async () => {
+      mockPrismaService.session.updateMany.mockResolvedValue({ count: 1 });
+      
+      const result = await service.logout();
       expect(result.success).toBe(true);
-      expect(mockPrismaService.user.updateMany).toHaveBeenCalledWith({
-        where: { walletAddress: mockUser.walletAddress.toLowerCase() },
-        data: { nonce: null },
-      });
     });
   });
 });

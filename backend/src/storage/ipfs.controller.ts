@@ -7,12 +7,16 @@ import {
   BadRequestException,
   HttpCode,
   HttpStatus,
+  UseGuards,
+  Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiResponse, ApiConsumes, ApiProperty } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiConsumes, ApiProperty, ApiHeader } from '@nestjs/swagger';
 import { StorageService, NFTTrait } from './storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { IsNotEmpty, IsString, IsOptional, IsArray, IsNumber } from 'class-validator';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 export class UploadMetadataDto {
   @ApiProperty({ description: 'NFT title / name', example: 'Cyberpunk Warrior #001' })
@@ -88,6 +92,7 @@ const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 
 @ApiTags('IPFS Storage')
 @Controller('api/v1/ipfs')
+@UseGuards(JwtAuthGuard)
 export class IpfsController {
   constructor(
     private readonly storageService: StorageService,
@@ -99,6 +104,7 @@ export class IpfsController {
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload an NFT image file directly to IPFS via Pinata' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   @ApiResponse({ status: 200, description: 'Image pinned successfully to IPFS' })
   async uploadImage(@UploadedFile() file: any) {
     if (!file) {
@@ -132,8 +138,9 @@ export class IpfsController {
   @Post('upload-metadata')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Create and pin standard NFT metadata JSON to IPFS' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   @ApiResponse({ status: 200, description: 'Metadata pinned successfully to IPFS' })
-  async uploadMetadata(@Body() dto: UploadMetadataDto) {
+  async uploadMetadata(@Body() dto: UploadMetadataDto, @Req() req: any) {
     if (!dto.name || !dto.name.trim()) {
       throw new BadRequestException('Metadata title "name" is required.');
     }
@@ -143,6 +150,13 @@ export class IpfsController {
     if (!dto.image || !dto.image.trim()) {
       throw new BadRequestException('Metadata "image" URI/URL is required.');
     }
+
+    if (dto.walletAddress && dto.walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Wallet address context mismatch with authenticated session.');
+    }
+
+    // Force walletAddress to be the authenticated user's wallet
+    const activeWallet = req.user.walletAddress.toLowerCase();
 
     const metadata = this.storageService.createNFTMetadata(
       dto.name,
@@ -157,30 +171,27 @@ export class IpfsController {
       `${dto.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-metadata.json`,
     );
 
-    // Save asset to database if wallet address provided and user exists
+    // Save asset to database
     let assetId: string | undefined;
-    if (dto.walletAddress) {
-      try {
-        const user = await this.prisma.user.findUnique({
-          where: { walletAddress: dto.walletAddress.toLowerCase() },
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { walletAddress: activeWallet },
+      });
+      if (user) {
+        const asset = await this.prisma.aiAsset.create({
+          data: {
+            userId: user.id,
+            walletAddress: user.walletAddress,
+            originalPrompt: `User Uploaded NFT: ${dto.name}`,
+            imageUrl: dto.image,
+            metadataUri: result.ipfsUrl,
+            provider: 'ipfs',
+          },
         });
-        if (user) {
-          const asset = await this.prisma.aiAsset.create({
-            data: {
-              userId: user.id,
-              walletAddress: user.walletAddress,
-              originalPrompt: `User Uploaded NFT: ${dto.name}`,
-              imageUrl: dto.image,
-              metadataUri: result.ipfsUrl,
-              provider: 'ipfs',
-            },
-          });
-          assetId = asset.id;
-        }
-      } catch (err) {
-        // Non-critical database log failure
-        console.warn('Could not persist asset to database:', err);
+        assetId = asset.id;
       }
+    } catch (err) {
+      console.warn('Could not persist asset to database:', err);
     }
 
     return {
@@ -196,10 +207,12 @@ export class IpfsController {
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload image and generate/upload metadata JSON to IPFS in one request' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   async processNFT(
     @UploadedFile() file: any,
     @Body('name') name: string,
     @Body('description') description: string,
+    @Req() req: any,
     @Body('attributes') attributesJson?: string,
     @Body('externalUrl') externalUrl?: string,
     @Body('walletAddress') walletAddress?: string,
@@ -219,6 +232,12 @@ export class IpfsController {
     if (!description || !description.trim()) {
       throw new BadRequestException('NFT description is required.');
     }
+
+    if (walletAddress && walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Wallet address context mismatch with authenticated session.');
+    }
+
+    const activeWallet = req.user.walletAddress.toLowerCase();
 
     if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
       throw new BadRequestException(`Invalid file type "${file.mimetype}".`);
@@ -270,29 +289,27 @@ export class IpfsController {
       `${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-metadata.json`,
     );
 
-    // 5. Save record in database if wallet is passed
+    // 5. Save record in database
     let assetId: string | undefined;
-    if (walletAddress) {
-      try {
-        const user = await this.prisma.user.findUnique({
-          where: { walletAddress: walletAddress.toLowerCase() },
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { walletAddress: activeWallet },
+      });
+      if (user) {
+        const asset = await this.prisma.aiAsset.create({
+          data: {
+            userId: user.id,
+            walletAddress: user.walletAddress,
+            originalPrompt: `Uploaded NFT: ${name}`,
+            imageUrl: imageRes.gatewayUrl,
+            metadataUri: metaRes.ipfsUrl,
+            provider: 'ipfs',
+          },
         });
-        if (user) {
-          const asset = await this.prisma.aiAsset.create({
-            data: {
-              userId: user.id,
-              walletAddress: user.walletAddress,
-              originalPrompt: `Uploaded NFT: ${name}`,
-              imageUrl: imageRes.gatewayUrl,
-              metadataUri: metaRes.ipfsUrl,
-              provider: 'ipfs',
-            },
-          });
-          assetId = asset.id;
-        }
-      } catch (err) {
-        console.warn('DB recording failed:', err);
+        assetId = asset.id;
       }
+    } catch (err) {
+      console.warn('DB recording failed:', err);
     }
 
     return {

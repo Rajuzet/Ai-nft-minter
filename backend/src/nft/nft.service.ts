@@ -1,11 +1,35 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ethers } from 'ethers';
+import { createPublicClient, http } from 'viem';
+import { baseSepolia, base, mainnet, polygon } from 'viem/chains';
 
 // Simple minimal ERC-721 ABI for reading ownerOf
 const ERC721_ABI = [
   "function ownerOf(uint256 tokenId) view returns (address)"
 ];
+
+const TX_HASH_REGEX = /^0x[a-fA-F0-9]{64}$/;
+
+function getViemChain(chainId: number) {
+  switch (chainId) {
+    case 8453: return base;
+    case 1: return mainnet;
+    case 137: return polygon;
+    case 84532:
+    default: return baseSepolia;
+  }
+}
+
+function getRpcUrl(chainId: number): string {
+  switch (chainId) {
+    case 84532: return process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';
+    case 8453: return process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
+    case 1: return process.env.ETH_MAINNET_RPC_URL || 'https://eth.llamarpc.com';
+    case 137: return process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com';
+    default: return process.env.RPC_URL || 'https://sepolia.base.org';
+  }
+}
 
 @Injectable()
 export class NftService {
@@ -51,10 +75,37 @@ export class NftService {
     });
   }
 
-  async confirmMint(id: string, data: { tokenId: number, txHash: string, blockNumber: number }) {
+  async confirmMint(id: string, data: { tokenId: number, txHash: string, blockNumber: number }, requesterWalletAddress?: string) {
+    // Validate txHash format
+    if (!TX_HASH_REGEX.test(data.txHash)) {
+      throw new BadRequestException('Invalid transaction hash format.');
+    }
+
     const record = await this.prisma.nft.findUnique({ where: { id } });
     if (!record) {
       throw new NotFoundException('Pending mint record not found');
+    }
+
+    if (requesterWalletAddress && record.ownerAddress.toLowerCase() !== requesterWalletAddress.toLowerCase()) {
+      throw new ForbiddenException('Access denied. You do not own this pending mint record.');
+    }
+
+    // Verify on-chain receipt
+    try {
+      const client = createPublicClient({
+        chain: getViemChain(record.chainId),
+        transport: http(getRpcUrl(record.chainId)),
+      });
+      const receipt = await client.getTransactionReceipt({
+        hash: data.txHash as `0x${string}`,
+      });
+      if (receipt && receipt.status !== 'success') {
+        throw new BadRequestException('Mint transaction failed on-chain.');
+      }
+    } catch (err: any) {
+      if (err instanceof BadRequestException) throw err;
+      this.logger.warn(`Receipt verification for mint ${data.txHash}: ${err.message}`);
+      // Allow through if receipt is not yet available (pending)
     }
     
     // Check if another record already has this tokenId and contractAddress
@@ -86,7 +137,16 @@ export class NftService {
     });
   }
 
-  async markFailed(id: string, txHash: string) {
+  async markFailed(id: string, txHash: string, requesterWalletAddress?: string) {
+    const record = await this.prisma.nft.findUnique({ where: { id } });
+    if (!record) {
+      throw new NotFoundException('Pending mint record not found');
+    }
+
+    if (requesterWalletAddress && record.ownerAddress.toLowerCase() !== requesterWalletAddress.toLowerCase()) {
+      throw new ForbiddenException('Access denied. You do not own this pending mint record.');
+    }
+
     return this.prisma.nft.update({
       where: { id },
       data: {

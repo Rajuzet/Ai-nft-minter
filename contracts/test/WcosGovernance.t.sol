@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
 import "forge-std/Test.sol";
@@ -6,6 +6,9 @@ import "../src/WcosGovernanceToken.sol";
 import "../src/WcosGovernor.sol";
 import "../src/WcosTreasury.sol";
 import "../src/WcosStaking.sol";
+import "../src/WcosMarketplace.sol";
+import "../src/WcosNFTCollection.sol";
+import "@openzeppelin/contracts/governance/TimelockController.sol";
 
 contract WcosGovernanceTest is Test {
     WcosGovernanceToken public token;
@@ -28,7 +31,7 @@ contract WcosGovernanceTest is Test {
 
         vm.startPrank(owner);
         token = new WcosGovernanceToken("WCOS Governance", "WGT", 1_000_000 * 10 ** 18);
-        governor = new WcosGovernor(token, QUORUM_PERCENT, VOTING_DURATION);
+        governor = new WcosGovernor(token, QUORUM_PERCENT, VOTING_DURATION, address(0));
         treasury = new WcosTreasury(address(governor));
         staking = new WcosStaking(address(token), address(token), 1);
 
@@ -266,5 +269,160 @@ contract WcosGovernanceTest is Test {
         assertEq(staking.balances(memberB), 0);
         assertEq(token.balanceOf(memberB), balanceBefore + 500 * 10 ** 18);
         vm.stopPrank();
+    }
+
+    function testTokenTransferCheckpoints() public {
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.stopPrank();
+
+        vm.startPrank(memberB);
+        token.delegate(memberB);
+        vm.stopPrank();
+
+        vm.roll(10);
+        uint256 aVotesBefore = token.getPastVotes(memberA, 9);
+        uint256 bVotesBefore = token.getPastVotes(memberB, 9);
+        assertEq(aVotesBefore, 100_000 * 10 ** 18);
+        assertEq(bVotesBefore, 100_000 * 10 ** 18);
+
+        // Transfer tokens from A to B
+        vm.prank(memberA);
+        token.transfer(memberB, 40_000 * 10 ** 18);
+
+        vm.roll(11);
+        uint256 aVotesAfter = token.getPastVotes(memberA, 10);
+        uint256 bVotesAfter = token.getPastVotes(memberB, 10);
+        assertEq(aVotesAfter, 60_000 * 10 ** 18);
+        assertEq(bVotesAfter, 140_000 * 10 ** 18);
+    }
+
+    function testOwnable2Step() public {
+        vm.startPrank(owner);
+        token.transferOwnership(memberA);
+        assertEq(token.owner(), owner);
+        assertEq(token.pendingOwner(), memberA);
+        vm.stopPrank();
+
+        vm.prank(memberA);
+        token.acceptOwnership();
+        assertEq(token.owner(), memberA);
+    }
+
+    function testStakingPausable() public {
+        vm.prank(owner);
+        staking.pause();
+        assertTrue(staking.paused());
+
+        vm.startPrank(memberB);
+        token.approve(address(staking), 500 * 10 ** 18);
+        vm.expectRevert("Pausable: paused");
+        staking.stake(500 * 10 ** 18);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        staking.unpause();
+
+        vm.startPrank(memberB);
+        staking.stake(500 * 10 ** 18);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        staking.pause();
+
+        vm.startPrank(memberB);
+        vm.warp(block.timestamp + 31 days);
+        staking.withdraw(500 * 10 ** 18);
+        assertEq(staking.balances(memberB), 0);
+        vm.stopPrank();
+    }
+
+    function testMarketplacePausable() public {
+        vm.startPrank(owner);
+        WcosMarketplace mkt = new WcosMarketplace();
+        WcosNFTCollection col = new WcosNFTCollection("Test NFT", "TNFT", 100, 500, address(0x5555));
+        uint256 tokenId = col.mintToken(owner, "ipfs://uri");
+        col.approve(address(mkt), tokenId);
+
+        mkt.pause();
+        assertTrue(mkt.paused());
+
+        vm.expectRevert("Pausable: paused");
+        mkt.listToken(address(col), tokenId, 1 ether);
+        vm.stopPrank();
+    }
+
+    function testMarketplaceFees() public {
+        vm.startPrank(owner);
+        WcosMarketplace mkt = new WcosMarketplace();
+        WcosNFTCollection col = new WcosNFTCollection("Test NFT", "TNFT", 100, 500, address(0x5555));
+        
+        address feeCollector = address(0x6666);
+        mkt.setFeeBps(250);
+        mkt.setFeeRecipient(feeCollector);
+
+        uint256 tokenId = col.mintToken(owner, "ipfs://uri");
+        col.approve(address(mkt), tokenId);
+        uint256 listingId = mkt.listToken(address(col), tokenId, 10 ether);
+        vm.stopPrank();
+
+        address buyerAddress = address(0x7777);
+        vm.deal(buyerAddress, 20 ether);
+
+        uint256 ownerBefore = owner.balance;
+        uint256 royaltyBefore = address(0x5555).balance;
+        uint256 feeBefore = feeCollector.balance;
+
+        vm.prank(buyerAddress);
+        mkt.buyToken{value: 10 ether}(listingId);
+
+        assertEq(address(0x5555).balance - royaltyBefore, 0.5 ether);
+        assertEq(feeCollector.balance - feeBefore, 0.25 ether);
+        assertEq(owner.balance - ownerBefore, 9.25 ether);
+    }
+
+    function testGovernanceTimelock() public {
+        vm.startPrank(owner);
+        address[] memory proposers = new address[](0);
+        address[] memory executors = new address[](0);
+        TimelockController tLock = new TimelockController(
+            1 days,
+            proposers,
+            executors,
+            owner
+        );
+
+        WcosGovernor tGov = new WcosGovernor(token, QUORUM_PERCENT, VOTING_DURATION, address(tLock));
+
+        tLock.grantRole(tLock.PROPOSER_ROLE(), address(tGov));
+        tLock.grantRole(tLock.EXECUTOR_ROLE(), address(tGov));
+        tLock.grantRole(tLock.EXECUTOR_ROLE(), address(0));
+        vm.stopPrank();
+
+        vm.startPrank(memberA);
+        token.delegate(memberA);
+        vm.roll(block.number + 1);
+        uint256 proposalId = tGov.propose(address(0), 0, "", "Timelock test");
+        tGov.castVote(proposalId, true);
+        vm.stopPrank();
+
+        vm.startPrank(memberB);
+        token.delegate(memberB);
+        vm.roll(block.number + 1);
+        tGov.castVote(proposalId, true);
+        vm.stopPrank();
+
+        vm.roll(block.number + VOTING_DURATION + 1);
+        assertEq(uint256(tGov.state(proposalId)), uint256(WcosGovernor.ProposalState.Succeeded));
+
+        tGov.queue(proposalId);
+        assertEq(uint256(tGov.state(proposalId)), uint256(WcosGovernor.ProposalState.Queued));
+
+        vm.expectRevert("WcosGovernor: timelock delay not passed");
+        tGov.execute(proposalId);
+
+        vm.warp(block.timestamp + 1 days + 1);
+        tGov.execute(proposalId);
+        assertEq(uint256(tGov.state(proposalId)), uint256(WcosGovernor.ProposalState.Executed));
     }
 }

@@ -2,9 +2,9 @@
 pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-contract WcosGovernanceToken is ERC20, Ownable {
+contract WcosGovernanceToken is ERC20, Ownable2Step {
     
     struct Checkpoint {
         uint32 fromBlock;
@@ -24,7 +24,6 @@ contract WcosGovernanceToken is ERC20, Ownable {
 
     function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
-        _moveDelegates(address(0), delegates[to], amount);
     }
 
     function delegate(address delegatee) external {
@@ -89,5 +88,14 @@ contract WcosGovernanceToken is ERC20, Ownable {
             numCheckpoints[delegatee] = nCheckpoints + 1;
         }
         emit DelegateVotesChanged(delegatee, oldVotes, newVotes);
+    }
+
+    function _afterTokenTransfer(
+        address from,
+        address to,
+        uint256 amount
+    ) internal virtual override {
+        super._afterTokenTransfer(from, to, amount);
+        _moveDelegates(delegates[from], delegates[to], amount);
     }
 }

@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiProperty } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, HttpCode, HttpStatus, UseGuards, Req, ForbiddenException } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiProperty, ApiHeader } from '@nestjs/swagger';
 import { MarketplaceService, ListingRecord } from './marketplace.service';
 import { IsNotEmpty, IsString, IsNumber, IsOptional } from 'class-validator';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 class CreateListingDto {
   @ApiProperty({ description: 'NFT Smart Contract Address' })
@@ -100,23 +101,35 @@ export class MarketplaceController {
   }
 
   @Post('list')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a pending listing and verify on-chain' })
-  create(@Body() dto: CreateListingDto) {
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  create(@Body() dto: CreateListingDto, @Req() req: any) {
+    if (dto.seller.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Seller wallet address mismatch with authenticated session.');
+    }
     return this.marketplaceService.create(dto);
   }
 
   @Post('buy')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark an NFT as bought and verify on-chain' })
-  buy(@Body() dto: BuyListingDto) {
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  buy(@Body() dto: BuyListingDto, @Req() req: any) {
+    if (dto.buyer.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Buyer wallet address mismatch with authenticated session.');
+    }
     return this.marketplaceService.buy(dto.id, dto.buyer, dto.txHash);
   }
 
   @Post('cancel')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark a listing as cancelled and verify on-chain' })
-  cancel(@Body() dto: CancelListingDto) {
-    return this.marketplaceService.cancel(dto.id, dto.txHash);
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  cancel(@Body() dto: CancelListingDto, @Req() req: any) {
+    return this.marketplaceService.cancel(dto.id, dto.txHash, req.user.walletAddress);
   }
 }

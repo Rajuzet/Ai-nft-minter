@@ -17,16 +17,30 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
+    const dbUrl = process.env.DATABASE_URL;
+    if (!dbUrl) {
+      const errorMsg = 'DATABASE_URL environment variable is missing!';
+      this.logger.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+
     try {
+      // 1. Establish connection
       await this.$connect();
+
+      // 2. Ping database to verify responsiveness
+      await this.$executeRawUnsafe('SELECT 1;');
+
       this._connected = true;
-      const provider = process.env.DATABASE_URL?.startsWith('file:') ? 'SQLite' : 'PostgreSQL';
-      this.logger.log(`Prisma ORM connected to ${provider} database ✓`);
+      const provider = dbUrl.startsWith('file:') ? 'SQLite' : 'PostgreSQL';
+      this.logger.log(`Prisma ORM connected and verified response from ${provider} database ✓`);
     } catch (error: unknown) {
       this._connected = false;
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error(`Prisma DB connection failed: ${msg}`);
-      this.logger.warn('APIs requiring DB persistence will return empty results until a database is available.');
+      
+      // Implement fail-fast behavior: throw error to prevent application startup if database is unavailable
+      throw new Error(`Database Initialization Failed: ${msg}`);
     }
   }
 

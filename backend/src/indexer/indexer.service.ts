@@ -38,6 +38,14 @@ const WcosGovernorABI = [
     name: 'ProposalCanceled',
     inputs: [{ indexed: true, name: 'proposalId', type: 'uint256' }],
   },
+  {
+    type: 'event',
+    name: 'ProposalQueued',
+    inputs: [
+      { indexed: true, name: 'proposalId', type: 'uint256' },
+      { indexed: false, name: 'eta', type: 'uint256' },
+    ],
+  },
 ] as const;
 
 const WcosGovernanceTokenABI = [
@@ -625,6 +633,21 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
               data: {
                 status: 'EXECUTED',
                 executionTransactionHash: txHash,
+              }
+            });
+          }
+        } else if (eventName === 'ProposalQueued') {
+          const onChainProposalId = args.proposalId.toString();
+          dataJson = JSON.stringify({ onChainProposalId });
+
+          const proposal = await this.prisma.daoProposal.findFirst({
+            where: { proposalId: onChainProposalId, chainId: this.chainId },
+          });
+          if (proposal) {
+            await this.prisma.daoProposal.update({
+              where: { id: proposal.id },
+              data: {
+                status: 'QUEUED',
               }
             });
           }

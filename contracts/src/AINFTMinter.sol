@@ -3,9 +3,9 @@ pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/token/common/ERC2981.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-contract AINFTMinter is ERC721URIStorage, ERC2981, Ownable {
+contract AINFTMinter is ERC721URIStorage, ERC2981, Ownable2Step {
     uint256 public nextTokenId;
     uint256 public constant mintFee = 0.005 ether;
 
@@ -25,7 +25,8 @@ contract AINFTMinter is ERC721URIStorage, ERC2981, Ownable {
     function withdrawEarnings() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "AINFTMinter: no earnings to withdraw");
-        payable(owner()).transfer(balance);
+        (bool success, ) = payable(owner()).call{value: balance}("");
+        require(success, "AINFTMinter: withdrawal failed");
     }
 
     function _burn(uint256 tokenId) internal virtual override(ERC721URIStorage) {

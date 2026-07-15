@@ -2,10 +2,13 @@
 pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-contract WcosStaking is ReentrancyGuard, Ownable {
+contract WcosStaking is ReentrancyGuard, Ownable2Step, Pausable {
+    using SafeERC20 for IERC20;
     
     IERC20 public stakingToken;
     IERC20 public rewardToken;
@@ -33,6 +36,14 @@ contract WcosStaking is ReentrancyGuard, Ownable {
         rewardRate = _rewardRate;
     }
 
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
     function rewardPerToken() public view returns (uint256) {
         return rewardPerTokenStored;
     }
@@ -53,11 +64,11 @@ contract WcosStaking is ReentrancyGuard, Ownable {
         return yield + rewards[account];
     }
 
-    function stake(uint256 amount) external nonReentrant {
+    function stake(uint256 amount) external whenNotPaused nonReentrant {
         _stake(msg.sender, amount, 30);
     }
 
-    function stake(uint256 amount, uint256 lockDuration) external nonReentrant {
+    function stake(uint256 amount, uint256 lockDuration) external whenNotPaused nonReentrant {
         require(lockDuration == 30 || lockDuration == 90 || lockDuration == 365, "WcosStaking: invalid lock duration");
         _stake(msg.sender, amount, lockDuration);
     }
@@ -71,7 +82,7 @@ contract WcosStaking is ReentrancyGuard, Ownable {
         lockDurations[user] = lockDuration;
         unlockTimes[user] = block.timestamp + (lockDuration * 1 days);
         
-        stakingToken.transferFrom(user, address(this), amount);
+        stakingToken.safeTransferFrom(user, address(this), amount);
         
         emit Staked(user, amount);
     }
@@ -85,7 +96,7 @@ contract WcosStaking is ReentrancyGuard, Ownable {
         balances[msg.sender] -= amount;
         stakeTimes[msg.sender] = block.timestamp;
 
-        stakingToken.transfer(msg.sender, amount);
+        stakingToken.safeTransfer(msg.sender, amount);
 
         emit Withdrawn(msg.sender, amount);
     }
@@ -97,7 +108,7 @@ contract WcosStaking is ReentrancyGuard, Ownable {
         rewards[msg.sender] = 0;
         stakeTimes[msg.sender] = block.timestamp; // Reset yield accrual start time
 
-        rewardToken.transfer(msg.sender, reward);
+        rewardToken.safeTransfer(msg.sender, reward);
         emit RewardPaid(msg.sender, reward);
     }
 
@@ -111,7 +122,7 @@ contract WcosStaking is ReentrancyGuard, Ownable {
         unlockTimes[msg.sender] = 0;
         lockDurations[msg.sender] = 0;
 
-        stakingToken.transfer(msg.sender, amount);
+        stakingToken.safeTransfer(msg.sender, amount);
         emit Withdrawn(msg.sender, amount);
     }
 }

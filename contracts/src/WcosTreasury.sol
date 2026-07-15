@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-contract WcosTreasury is Ownable {
+contract WcosTreasury is Ownable2Step {
+    using SafeERC20 for IERC20;
     
     address public governor;
 
@@ -29,13 +31,14 @@ contract WcosTreasury is Ownable {
 
     function executeRelease(address payable recipient, uint256 amount) external onlyGovernor {
         require(address(this).balance >= amount, "WcosTreasury: insufficient balance");
-        recipient.transfer(amount);
+        (bool success, ) = recipient.call{value: amount}("");
+        require(success, "WcosTreasury: release failed");
         emit FundsReleased(recipient, amount);
     }
 
     function executeTokenRelease(address token, address recipient, uint256 amount) external onlyGovernor {
         require(IERC20(token).balanceOf(address(this)) >= amount, "WcosTreasury: insufficient balance");
-        IERC20(token).transfer(recipient, amount);
+        IERC20(token).safeTransfer(recipient, amount);
         emit TokenReleased(token, recipient, amount);
     }
 

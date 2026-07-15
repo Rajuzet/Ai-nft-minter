@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: wcos-postgres-prod
+    environment:
+      POSTGRES_USER: wcos_prod_user
+      POSTGRES_PASSWORD: prodpassword123
+      POSTGRES_DB: wcos_prod
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wcos_prod_user -d wcos_prod"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: wcos-redis-prod
+    command: redis-server --requirepass redissecurepassword123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redissecurepassword123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: wcos-backend-prod
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: "postgresql://wcos_prod_user:prodpassword123@postgres:5432/wcos_prod?schema=public"
+      DIRECT_URL: "postgresql://wcos_prod_user:prodpassword123@postgres:5432/wcos_prod?schema=public"
+      REDIS_URL: "redis://:redissecurepassword123@redis:6379"
+      JWT_SECRET: "wcos-prod-very-secret-jwt-signing-key-for-auth"
+      FRONTEND_URL: "http://localhost:3000"
+      RPC_URL: "https://sepolia.base.org"
+      CHAIN_ID: "84532"
+      NFT_CONTRACT_ADDRESS: "0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A"
+      STORAGE_PROVIDER: "local"
+      ENABLE_NEWS_SYNC: "true"
+      RSS_FEED_URLS: "https://www.coindesk.com/arc/outboundfeeds/rss/,https://decrypt.co/feed"
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health | grep -q 'ok'"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  indexer:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: wcos-indexer-prod
+    entrypoint: ["npm", "run", "indexer"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: "postgresql://wcos_prod_user:prodpassword123@postgres:5432/wcos_prod?schema=public"
+      DIRECT_URL: "postgresql://wcos_prod_user:prodpassword123@postgres:5432/wcos_prod?schema=public"
+      RPC_URL: "https://sepolia.base.org"
+      CHAIN_ID: "84532"
+      NFT_CONTRACT_ADDRESS: "0x498e82d77C29FAf0605a96E3D4F59E9E0C1BEc3A"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: wcos-frontend-prod
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: "http://localhost:4000"
+      NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: "627e2bcf40428d0954b87e2213e4b77f"
+      NEXT_PUBLIC_DEFAULT_CHAIN: "base-sepolia"
+      NEXT_PUBLIC_DEFAULT_CHAIN_ID: "84532"
+      NEXT_PUBLIC_CHAIN_ID: "84532"
+      NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL: "https://sepolia.base.org"
+      NEXT_PUBLIC_APP_NAME: "WCOS Creator Console"
+      NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_prod_data:
+  redis_prod_data:

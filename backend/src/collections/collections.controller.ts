@@ -101,18 +101,22 @@ export class CollectionsController {
   }
 
   @Post()
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Register a new collection profile or draft' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   @ApiResponse({ status: 201, description: 'Success' })
-  create(@Body() dto: CreateCollectionDto) {
-    return this.collectionsService.create(dto);
+  create(@Body() dto: CreateCollectionDto, @Req() req: any) {
+    return this.collectionsService.create(dto, req.user.walletAddress);
   }
 
   @Post('deploy')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update collection status to deployed with contract address' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   @ApiResponse({ status: 200, description: 'Success' })
-  deploy(@Body() dto: DeployCollectionDto) {
-    return this.collectionsService.deploy(dto.id, dto.contractAddress);
+  deploy(@Body() dto: DeployCollectionDto, @Req() req: any) {
+    return this.collectionsService.deploy(dto.id, dto.contractAddress, req.user.walletAddress);
   }
 }

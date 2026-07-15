@@ -112,17 +112,11 @@ export class StorageService {
       }
     }
 
-    // Fallback mode: standard simulated IPFS CID if no Pinata keys configured
-    this.logger.warn('Pinata API credentials (PINATA_JWT or PINATA_API_KEY/SECRET) missing in env. Using IPFS simulation mode.');
-    const simulatedHash = `QmSimulatedImage${Date.now()}${Math.random().toString(36).substring(2, 7)}`;
-    const ipfsUrl = `ipfs://${simulatedHash}`;
-    const gatewayUrl = `${gatewayBase}${simulatedHash}`;
-
-    return {
-      ipfsHash: simulatedHash,
-      ipfsUrl,
-      gatewayUrl,
-    };
+    // No Pinata credentials configured — fail explicitly in production
+    this.logger.error('IPFS upload failed: Pinata API credentials (PINATA_JWT or PINATA_API_KEY/PINATA_SECRET_API_KEY) are not configured.');
+    throw new InternalServerErrorException(
+      'IPFS storage is not configured. Set PINATA_JWT or PINATA_API_KEY/PINATA_SECRET_API_KEY environment variables.',
+    );
   }
 
   /**
@@ -213,17 +207,11 @@ export class StorageService {
       }
     }
 
-    // Fallback mode if no credentials configured
-    this.logger.warn('Pinata API credentials missing. Using IPFS metadata simulation mode.');
-    const simulatedHash = `QmSimulatedMetadata${Date.now()}${Math.random().toString(36).substring(2, 7)}`;
-    const ipfsUrl = `ipfs://${simulatedHash}`;
-    const gatewayUrl = `${gatewayBase}${simulatedHash}`;
-
-    return {
-      ipfsHash: simulatedHash,
-      ipfsUrl,
-      gatewayUrl,
-    };
+    // No Pinata credentials configured — fail explicitly in production
+    this.logger.error('IPFS metadata upload failed: Pinata API credentials are not configured.');
+    throw new InternalServerErrorException(
+      'IPFS storage is not configured. Set PINATA_JWT or PINATA_API_KEY/PINATA_SECRET_API_KEY environment variables.',
+    );
   }
 
   // Legacy wrappers for backward compatibility

@@ -11,7 +11,11 @@ import {
   ParseIntPipe,
   DefaultValuePipe,
   BadRequestException,
+  UseGuards,
+  Req,
+  ForbiddenException,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import {
   DaoService,
   RegisterProposalDto,
@@ -20,7 +24,9 @@ import {
   ConfirmVoteDto,
   RegisterDelegationDto,
 } from './dao.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
+@ApiTags('Governance DAO')
 @Controller('api/v1/governance')
 export class DaoController {
   constructor(private readonly daoService: DaoService) {}
@@ -52,7 +58,6 @@ export class DaoController {
 
   @Get('proposals/:proposalId')
   getProposal(@Param('proposalId') proposalId: string, @Query('chainId') chainId?: string) {
-    // If chainId provided, treat as on-chain lookup; otherwise treat as DB ID
     if (chainId && /^\d+$/.test(proposalId)) {
       return this.daoService.getProposalByOnChainId(proposalId, parseInt(chainId, 10));
     }
@@ -60,16 +65,25 @@ export class DaoController {
   }
 
   @Post('proposals/register')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
-  registerProposal(@Body() dto: RegisterProposalDto) {
+  @ApiOperation({ summary: 'Register a new DAO proposal' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  registerProposal(@Body() dto: RegisterProposalDto, @Req() req: any) {
     if (!dto.walletAddress || !dto.creationTransactionHash || !dto.onChainProposalId) {
       throw new BadRequestException('walletAddress, creationTransactionHash, and onChainProposalId are required');
+    }
+    if (dto.walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Wallet address mismatch with authenticated session.');
     }
     return this.daoService.registerProposal(dto);
   }
 
   @Patch('proposals/confirm')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm DAO proposal' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   confirmProposal(@Body() dto: ConfirmProposalDto) {
     if (!dto.creationTransactionHash) {
       throw new BadRequestException('creationTransactionHash is required');
@@ -78,7 +92,10 @@ export class DaoController {
   }
 
   @Patch('proposals/state')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update DAO proposal state' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   updateProposalState(
     @Body() body: {
       onChainProposalId: string;
@@ -106,22 +123,49 @@ export class DaoController {
     );
   }
 
+  @Post('proposals/sync-state')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sync DAO proposal state from chain' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  async syncProposalState(
+    @Body() body: { onChainProposalId: string; chainId: number },
+  ) {
+    if (!body.onChainProposalId || !body.chainId) {
+      throw new BadRequestException('onChainProposalId and chainId are required');
+    }
+    const state = await this.daoService.syncProposalStateFromChain(
+      body.onChainProposalId,
+      body.chainId,
+    );
+    return { onChainProposalId: body.onChainProposalId, chainId: body.chainId, currentState: state };
+  }
+
   // ─── Votes ────────────────────────────────────────────────────────────────
 
   @Post('votes/register')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
-  registerVote(@Body() dto: RegisterVoteDto) {
+  @ApiOperation({ summary: 'Register a vote casting' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  registerVote(@Body() dto: RegisterVoteDto, @Req() req: any) {
     if (!dto.walletAddress || !dto.transactionHash || !dto.onChainProposalId) {
       throw new BadRequestException('walletAddress, transactionHash, and onChainProposalId are required');
     }
     if (dto.support === undefined || dto.support === null) {
       throw new BadRequestException('support (boolean) is required');
     }
+    if (dto.walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Wallet address mismatch with authenticated session.');
+    }
     return this.daoService.registerVote(dto);
   }
 
   @Patch('votes/confirm')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm a vote casting' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
   confirmVote(@Body() dto: ConfirmVoteDto) {
     if (!dto.transactionHash) {
       throw new BadRequestException('transactionHash is required');
@@ -132,10 +176,16 @@ export class DaoController {
   // ─── Delegations ──────────────────────────────────────────────────────────
 
   @Post('delegations/register')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
-  registerDelegation(@Body() dto: RegisterDelegationDto) {
+  @ApiOperation({ summary: 'Register a delegation' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  registerDelegation(@Body() dto: RegisterDelegationDto, @Req() req: any) {
     if (!dto.walletAddress || !dto.delegateAddress || !dto.transactionHash) {
       throw new BadRequestException('walletAddress, delegateAddress, and transactionHash are required');
+    }
+    if (dto.walletAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Wallet address mismatch with authenticated session.');
     }
     return this.daoService.registerDelegation(dto);
   }
@@ -143,9 +193,15 @@ export class DaoController {
   // ─── User History ─────────────────────────────────────────────────────────
 
   @Get('wallet/:address/history')
-  getWalletHistory(@Param('address') address: string) {
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get wallet governance history' })
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  getWalletHistory(@Param('address') address: string, @Req() req: any) {
     if (!address || !address.startsWith('0x')) {
       throw new BadRequestException('Invalid wallet address');
+    }
+    if (address.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Access denied. Wallet mismatch.');
     }
     return this.daoService.getWalletGovernanceHistory(address);
   }

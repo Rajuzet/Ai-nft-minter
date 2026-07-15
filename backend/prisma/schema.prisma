@@ -1,6 +1,7 @@
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
@@ -8,33 +9,42 @@ generator client {
 }
 
 model User {
-  id            String               @id @default(uuid())
-  walletAddress String               @unique
-  displayName   String?
-  bio           String?
-  avatarUrl     String?
-  bannerUrl     String?
-  website       String?
-  twitter       String?
-  discord       String?
-  instagram     String?
-  verified      Boolean              @default(false)
-  nonce         String?
-  role          String               @default("CREATOR")
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  profile       Profile?
-  contracts     DeployedContract[]
-  aiAssets      AiAsset[]
-  collections   NftCollection[]
-  nfts          Nft[]                @relation("UserNfts")
-  listings      MarketplaceListing[] @relation("SellerListings")
-  purchases     MarketplaceListing[] @relation("BuyerPurchases")
-  daoProposals  DaoProposal[]
-  daoVotes      DaoVote[]
-  transactions  TransactionRecord[]
-  auditLogs     AuditLog[]
-  organizations OrganizationMember[]
+  id               String               @id @default(uuid())
+  walletAddress    String               @unique
+  username         String?              @unique
+  displayName      String?
+  bio              String?
+  avatarUrl        String?
+  bannerUrl        String?
+  website          String?
+  twitter          String?
+  discord          String?
+  instagram        String?
+  verified         Boolean              @default(false)
+  nonce            String?
+  role             String               @default("CREATOR")
+  status           String               @default("ACTIVE") // ACTIVE, SUSPENDED, DELETED
+  preferredChainId Int?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  profile          Profile?
+  contracts        DeployedContract[]
+  aiAssets         AiAsset[]
+  collections      NftCollection[]
+  nfts             Nft[]                @relation("UserNfts")
+  listings         MarketplaceListing[] @relation("SellerListings")
+  purchases        MarketplaceListing[] @relation("BuyerPurchases")
+  daoProposals     DaoProposal[]
+  daoVotes         DaoVote[]
+  transactions     TransactionRecord[]
+  auditLogs        AuditLog[]
+  organizations    OrganizationMember[]
+  wallets          Wallet[]             @relation("UserWallets")
+  sessions         Session[]            @relation("UserSessions")
+  notifications    Notification[]       @relation("UserNotifications")
+
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Profile {
@@ -122,7 +132,7 @@ model Nft {
   name            String?
   description     String?
   imageUrl        String?
-  attributes      String?              // stored as JSON string
+  attributes      String? // stored as JSON string
   prompt          String?
   aiModel         String?
   status          String               @default("MINTED") // PENDING, MINTED, FAILED
@@ -138,6 +148,11 @@ model Nft {
   listings        MarketplaceListing[] @relation("NftListings")
 
   @@unique([chainId, contractAddress, tokenId])
+  @@index([ownerAddress])
+  @@index([creatorAddress])
+  @@index([collectionId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model IndexedNft {
@@ -160,16 +175,16 @@ model IndexedNft {
 
 model MarketplaceListing {
   id                      String         @id @default(uuid())
-  onChainListingId        Int?           // Populated once confirmed on-chain
+  onChainListingId        Int? // Populated once confirmed on-chain
   collectionId            String?
   nftId                   String?
-  marketplaceContract     String?        // Address of marketplace contract
+  marketplaceContract     String? // Address of marketplace contract
   nftAddress              String
   tokenId                 Int
   sellerId                String
   buyerId                 String?
   price                   String
-  currencyAddress         String?        // ERC-20 payment token (null = native ETH/BNB/MATIC)
+  currencyAddress         String? // ERC-20 payment token (null = native ETH/BNB/MATIC)
   currencySymbol          String         @default("ETH")
   collectionName          String
   chain                   String         @default("base-sepolia")
@@ -180,7 +195,7 @@ model MarketplaceListing {
   name                    String
   description             String
   status                  String         @default("ACTIVE") // PENDING_APPROVAL, PENDING_LISTING, ACTIVE, SOLD, CANCELLED, etc.
-  txHash                  String?        // Legacy / generic
+  txHash                  String? // Legacy / generic
   listingTransactionHash  String?
   approvalTransactionHash String?
   saleTransactionHash     String?
@@ -198,6 +213,12 @@ model MarketplaceListing {
   collection              NftCollection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
   nft                     Nft?           @relation("NftListings", fields: [nftId], references: [id], onDelete: SetNull)
   sales                   NftSale[]      @relation("ListingSales")
+
+  @@index([status])
+  @@index([sellerId])
+  @@index([buyerId])
+  @@index([chainId])
+  @@index([createdAt])
 }
 
 model NftSale {
@@ -231,37 +252,37 @@ model DaoOrganization {
 }
 
 model DaoProposal {
-  id                        String          @id @default(uuid())
-  daoId                     String
-  proposerId                String
+  id                          String          @id @default(uuid())
+  daoId                       String
+  proposerId                  String
   /// On-chain proposalId as returned by WcosGovernor.propose() event (stored as string for bigint safety)
-  proposalId                String?         // blockchain proposal ID
-  title                     String
-  summary                   String?         // short summary separate from full description
-  description               String
-  category                  String?         @default("GENERAL")
-  proposalType              String?         @default("INFORMATIONAL") // INFORMATIONAL | EXECUTABLE
-  targetAddress             String
-  calldata                  String?         // hex-encoded calldata for executable proposals
-  valueTransferred          String          @default("0")
-  descriptionHash           String?         // keccak256 of description for on-chain verification
-  contentUri                String?         // optional IPFS or external link
-  snapshotBlock             String?         // startBlock as string (bigint safe)
-  deadlineBlock             String?         // endBlock as string (bigint safe)
-  governorContract          String?         // WcosGovernor address for this proposal
+  proposalId                  String? // blockchain proposal ID
+  title                       String
+  summary                     String? // short summary separate from full description
+  description                 String
+  category                    String?         @default("GENERAL")
+  proposalType                String?         @default("INFORMATIONAL") // INFORMATIONAL | EXECUTABLE
+  targetAddress               String
+  calldata                    String? // hex-encoded calldata for executable proposals
+  valueTransferred            String          @default("0")
+  descriptionHash             String? // keccak256 of description for on-chain verification
+  contentUri                  String? // optional IPFS or external link
+  snapshotBlock               String? // startBlock as string (bigint safe)
+  deadlineBlock               String? // endBlock as string (bigint safe)
+  governorContract            String? // WcosGovernor address for this proposal
   /// Vote totals (synced from chain — stored as strings for bigint safety)
-  forVotes                  String          @default("0")
-  againstVotes              String          @default("0")
-  status                    String          @default("PENDING") // PENDING|ACTIVE|DEFEATED|SUCCEEDED|EXECUTED|CANCELED
-  chainId                   Int             @default(84532)
-  creationTransactionHash   String?         // tx where propose() was called
-  executionTransactionHash  String?         // tx where execute() was called
-  cancellationTransactionHash String?       // tx where cancel() was called
-  createdAt                 DateTime        @default(now())
-  updatedAt                 DateTime        @updatedAt
-  dao                       DaoOrganization @relation(fields: [daoId], references: [id], onDelete: Cascade)
-  proposer                  User            @relation(fields: [proposerId], references: [id], onDelete: Cascade)
-  votes                     DaoVote[]
+  forVotes                    String          @default("0")
+  againstVotes                String          @default("0")
+  status                      String          @default("PENDING") // PENDING|ACTIVE|DEFEATED|SUCCEEDED|EXECUTED|CANCELED
+  chainId                     Int             @default(84532)
+  creationTransactionHash     String? // tx where propose() was called
+  executionTransactionHash    String? // tx where execute() was called
+  cancellationTransactionHash String? // tx where cancel() was called
+  createdAt                   DateTime        @default(now())
+  updatedAt                   DateTime        @updatedAt
+  dao                         DaoOrganization @relation(fields: [daoId], references: [id], onDelete: Cascade)
+  proposer                    User            @relation(fields: [proposerId], references: [id], onDelete: Cascade)
+  votes                       DaoVote[]
 }
 
 model DaoVote {
@@ -273,7 +294,7 @@ model DaoVote {
   support         Boolean
   /// Voting weight as string for bigint safety (raw token units with 18 decimals)
   weight          String      @default("0")
-  transactionHash String?     // tx where castVote() was called
+  transactionHash String? // tx where castVote() was called
   blockNumber     Int?
   status          String      @default("CONFIRMED") // PENDING | CONFIRMED | FAILED
   createdAt       DateTime    @default(now())
@@ -284,7 +305,7 @@ model DaoVote {
 }
 
 model AiAsset {
-  id                 String   @id @default(uuid())
+  id                 String    @id @default(uuid())
   userId             String
   walletAddress      String?
   name               String?
@@ -297,8 +318,8 @@ model AiAsset {
   provider           String?
   model              String?
   seed               Int?
-  generationSettings String?  // Stored as JSON string
-  status             String   @default("QUEUED")
+  generationSettings String? // Stored as JSON string
+  status             String    @default("QUEUED")
   imageUrl           String?
   imageUri           String?
   imageHash          String?
@@ -308,15 +329,15 @@ model AiAsset {
   mimeType           String?
   fileSize           Int?
   errorMessage       String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
   mintedAt           DateTime?
   chainId            Int?
   contractAddress    String?
   tokenId            Int?
   transactionHash    String?
 
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TransactionRecord {
@@ -330,6 +351,11 @@ model TransactionRecord {
   details   String? // stored as JSON string
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
 }
 
 model AuditLog {
@@ -441,28 +467,28 @@ model MagazineArticle {
 }
 
 model WalletPortfolio {
-  id               String   @id @default(uuid())
-  walletAddress    String   @unique
-  netValueUsd      String   @default("0.00")
-  totalAssetsUsd   String   @default("0.00")
-  totalDebtUsd     String   @default("0.00")
-  lastUpdated      DateTime @default(now())
+  id             String   @id @default(uuid())
+  walletAddress  String   @unique
+  netValueUsd    String   @default("0.00")
+  totalAssetsUsd String   @default("0.00")
+  totalDebtUsd   String   @default("0.00")
+  lastUpdated    DateTime @default(now())
 }
 
 model PortfolioSnapshot {
-  id             String   @id @default(uuid())
-  walletAddress  String
-  chainId        Int?     // null = aggregated across all chains
-  totalValueUsd  String
-  assetValueUsd  String
-  debtValueUsd   String
-  nativeValueUsd String
-  tokenValueUsd  String
-  nftValueUsd    String
-  stakingValueUsd String
+  id               String   @id @default(uuid())
+  walletAddress    String
+  chainId          Int? // null = aggregated across all chains
+  totalValueUsd    String
+  assetValueUsd    String
+  debtValueUsd     String
+  nativeValueUsd   String
+  tokenValueUsd    String
+  nftValueUsd      String
+  stakingValueUsd  String
   protocolValueUsd String
-  quoteCurrency  String   @default("USD")
-  snapshotTime   DateTime @default(now())
+  quoteCurrency    String   @default("USD")
+  snapshotTime     DateTime @default(now())
 
   @@index([walletAddress, snapshotTime])
 }
@@ -486,16 +512,16 @@ model TokenBalanceSnapshot {
 }
 
 model TokenMetadata {
-  id           String   @id @default(uuid())
-  chainId      Int
-  address      String
-  symbol       String
-  name         String
-  decimals     Int
-  logoUrl      String?
-  isVerified   Boolean  @default(false)
-  isSpam       Boolean  @default(false)
-  createdAt    DateTime @default(now())
+  id         String   @id @default(uuid())
+  chainId    Int
+  address    String
+  symbol     String
+  name       String
+  decimals   Int
+  logoUrl    String?
+  isVerified Boolean  @default(false)
+  isSpam     Boolean  @default(false)
+  createdAt  DateTime @default(now())
 
   @@unique([chainId, address])
 }
@@ -534,155 +560,155 @@ model DeFiPosition {
   id                 String   @id @default(uuid())
   walletAddress      String
   chainId            Int
-  protocolId         String   // e.g. "aave", "uniswap", "staking"
-  positionIdentifier String   // unique key from provider
-  type               String   // "LENDING" | "BORROWING" | "STAKING" | "LIQUIDITY"
-  depositedAssets    String   // JSON string: [{ symbol, amount, address, valueUsd }]
-  borrowedAssets     String   // JSON string: [{ symbol, amount, address, valueUsd }]
+  protocolId         String // e.g. "aave", "uniswap", "staking"
+  positionIdentifier String // unique key from provider
+  type               String // "LENDING" | "BORROWING" | "STAKING" | "LIQUIDITY"
+  depositedAssets    String // JSON string: [{ symbol, amount, address, valueUsd }]
+  borrowedAssets     String // JSON string: [{ symbol, amount, address, valueUsd }]
   netValueUsd        String
-  healthFactor       String?  // for lending positions
+  healthFactor       String? // for lending positions
   updatedAt          DateTime @default(now())
 
   @@unique([walletAddress, chainId, protocolId, positionIdentifier])
 }
 
 model DeFiReward {
-  id            String   @id @default(uuid())
-  walletAddress String
-  chainId       Int
-  protocolId    String
-  rewardToken   String
-  amount        String
-  valueUsd      String
-  claimable     Boolean  @default(true)
+  id             String   @id @default(uuid())
+  walletAddress  String
+  chainId        Int
+  protocolId     String
+  rewardToken    String
+  amount         String
+  valueUsd       String
+  claimable      Boolean  @default(true)
   rewardContract String?
-  updatedAt     DateTime @default(now())
+  updatedAt      DateTime @default(now())
 
   @@unique([walletAddress, chainId, protocolId, rewardToken])
 }
 
 model WalletTransaction {
-  id              String   @id @default(uuid())
-  walletAddress   String
-  chainId         Int
-  txHash          String
-  blockNumber     Int
-  timestamp       DateTime
-  type            String   // "SEND" | "RECEIVE" | "MINT" | "STAKE" | "SWAP" etc.
-  fromAddress     String
-  toAddress       String
-  tokenSymbol     String?
-  tokenAddress    String?
-  amount          String?
-  valueUsd        String?
-  gasFeeEth       String?
-  status          String   @default("SUCCESS")
-  createdAt       DateTime @default(now())
+  id            String   @id @default(uuid())
+  walletAddress String
+  chainId       Int
+  txHash        String
+  blockNumber   Int
+  timestamp     DateTime
+  type          String // "SEND" | "RECEIVE" | "MINT" | "STAKE" | "SWAP" etc.
+  fromAddress   String
+  toAddress     String
+  tokenSymbol   String?
+  tokenAddress  String?
+  amount        String?
+  valueUsd      String?
+  gasFeeEth     String?
+  status        String   @default("SUCCESS")
+  createdAt     DateTime @default(now())
 
   @@unique([walletAddress, chainId, txHash])
   @@index([walletAddress, timestamp])
 }
 
 model PortfolioSyncState {
-  id               String   @id @default(uuid())
-  walletAddress    String
-  chainId          Int
-  latestSyncedBlock Int     @default(0)
+  id                 String    @id @default(uuid())
+  walletAddress      String
+  chainId            Int
+  latestSyncedBlock  Int       @default(0)
   lastSuccessfulSync DateTime?
-  lastFailedSync   DateTime?
-  status           String   @default("IDLE") // "IDLE" | "SYNCING" | "COMPLETED" | "FAILED"
+  lastFailedSync     DateTime?
+  status             String    @default("IDLE") // "IDLE" | "SYNCING" | "COMPLETED" | "FAILED"
 
   @@unique([walletAddress, chainId])
 }
 
 model SwapTransaction {
-  id                    String   @id @default(uuid())
-  walletAddress         String
-  chainId               Int
-  provider              String
-  quoteId               String?
-  sellTokenAddress      String
-  sellTokenSymbol       String
-  sellTokenDecimals     Int
-  sellAmount            String
-  buyTokenAddress       String
-  buyTokenSymbol        String
-  buyTokenDecimals      Int
-  quotedBuyAmount       String
-  minimumBuyAmount      String
-  actualBuyAmount       String?
-  slippageBps           Int
-  priceImpact           String?
-  allowanceTarget       String?
-  routerAddress         String?
+  id                      String   @id @default(uuid())
+  walletAddress           String
+  chainId                 Int
+  provider                String
+  quoteId                 String?
+  sellTokenAddress        String
+  sellTokenSymbol         String
+  sellTokenDecimals       Int
+  sellAmount              String
+  buyTokenAddress         String
+  buyTokenSymbol          String
+  buyTokenDecimals        Int
+  quotedBuyAmount         String
+  minimumBuyAmount        String
+  actualBuyAmount         String?
+  slippageBps             Int
+  priceImpact             String?
+  allowanceTarget         String?
+  routerAddress           String?
   approvalTransactionHash String?
-  swapTransactionHash   String   @unique
-  blockNumber           Int?
-  gasUsed               String?
-  gasCost               String?
-  status                String   @default("PENDING") // PENDING, CONFIRMED, FAILED
-  failureReason         String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  swapTransactionHash     String   @unique
+  blockNumber             Int?
+  gasUsed                 String?
+  gasCost                 String?
+  status                  String   @default("PENDING") // PENDING, CONFIRMED, FAILED
+  failureReason           String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 model StakingPool {
-  id                 String   @id @default(uuid())
-  chainId            Int
-  stakingContract    String   @unique
-  poolId             String   @default("wgt-pool")
-  name               String
+  id                  String    @id @default(uuid())
+  chainId             Int
+  stakingContract     String    @unique
+  poolId              String    @default("wgt-pool")
+  name                String
   stakingTokenAddress String
-  rewardTokenAddress String
-  status             String   @default("ACTIVE") // ACTIVE, PAUSED, ENDED
-  startTime          DateTime @default(now())
-  endTime            DateTime?
-  lockDuration       Int      @default(30)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  rewardTokenAddress  String
+  status              String    @default("ACTIVE") // ACTIVE, PAUSED, ENDED
+  startTime           DateTime  @default(now())
+  endTime             DateTime?
+  lockDuration        Int       @default(30)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
 
 model StakingPosition {
-  id                 String   @id @default(uuid())
-  walletAddress      String
-  chainId            Int
-  stakingContract    String
-  poolId             String   @default("wgt-pool")
+  id                  String   @id @default(uuid())
+  walletAddress       String
+  chainId             Int
+  stakingContract     String
+  poolId              String   @default("wgt-pool")
   stakingTokenAddress String
-  rewardTokenAddress String
-  stakedAmount       String
-  pendingReward      String
-  claimedReward      String   @default("0")
-  stakeTimestamp     DateTime @default(now())
-  unlockTimestamp    DateTime
-  status             String   @default("ACTIVE") // ACTIVE, UNSTAKED
-  latestBlock        Int      @default(0)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  rewardTokenAddress  String
+  stakedAmount        String
+  pendingReward       String
+  claimedReward       String   @default("0")
+  stakeTimestamp      DateTime @default(now())
+  unlockTimestamp     DateTime
+  status              String   @default("ACTIVE") // ACTIVE, UNSTAKED
+  latestBlock         Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   @@unique([walletAddress, chainId, stakingContract])
 }
 
 model StakingTransaction {
-  id                      String   @id @default(uuid())
+  id                      String    @id @default(uuid())
   walletAddress           String
   chainId                 Int
   stakingContract         String
-  transactionType         String   // APPROVE, STAKE, CLAIM, UNSTAKE, EMERGENCY_WITHDRAW
+  transactionType         String // APPROVE, STAKE, CLAIM, UNSTAKE, EMERGENCY_WITHDRAW
   tokenAddress            String
   amount                  String
   rewardAmount            String?
   approvalTransactionHash String?
-  transactionHash         String   @unique
+  transactionHash         String    @unique
   blockNumber             Int?
   gasUsed                 String?
   gasCost                 String?
-  status                  String   @default("PENDING") // PENDING, CONFIRMED, COMPLETED, FAILED
+  status                  String    @default("PENDING") // PENDING, CONFIRMED, COMPLETED, FAILED
   failureReason           String?
-  submittedAt             DateTime @default(now())
+  submittedAt             DateTime  @default(now())
   confirmedAt             DateTime?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 }
 
 /// Tracks on-chain delegation events for governance voting power
@@ -706,8 +732,8 @@ model GovernanceTransaction {
   id              String    @id @default(uuid())
   walletAddress   String
   chainId         Int       @default(84532)
-  proposalId      String?   // DB proposal record ID (null for delegation)
-  onChainId       String?   // blockchain proposalId (null for delegation)
+  proposalId      String? // DB proposal record ID (null for delegation)
+  onChainId       String? // blockchain proposalId (null for delegation)
   /// DELEGATE | CREATE_PROPOSAL | VOTE | EXECUTE_PROPOSAL | CANCEL_PROPOSAL
   transactionType String
   transactionHash String    @unique
@@ -724,4 +750,82 @@ model GovernanceTransaction {
 
   @@index([walletAddress, chainId])
   @@index([proposalId])
+}
+
+model Wallet {
+  id                String    @id @default(uuid())
+  userId            String
+  address           String
+  normalizedAddress String    @unique
+  walletType        String?
+  isPrimary         Boolean   @default(false)
+  isVerified        Boolean   @default(false)
+  verifiedAt        DateTime?
+  lastActiveAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  user              User      @relation("UserWallets", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([address])
+}
+
+model AuthenticationNonce {
+  id               String    @id @default(cuid())
+  walletAddress    String
+  normalizedWallet String
+  nonceHash        String    @unique
+  domain           String
+  chainId          Int?
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([normalizedWallet])
+  @@index([expiresAt])
+}
+
+model Session {
+  id           String    @id @default(uuid())
+  sessionToken String    @unique
+  userId       String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  lastActivity DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  user         User      @relation("UserSessions", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  type      String    @default("INFO")
+  title     String
+  message   String
+  metadata  String? // JSON string
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+  user      User      @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+model IdempotencyRecord {
+  id           String   @id @default(uuid())
+  key          String   @unique
+  operation    String
+  requestHash  String
+  responseCode Int?
+  responseData String? // JSON string
+  status       String   @default("PROCESSING")
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([expiresAt])
 }

@@ -230,6 +230,83 @@ export const WcosMarketplaceABI = [
     ],
     outputs: [],
   },
+  {
+    type: "function",
+    name: "pause",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "unpause",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "setFeeBps",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_feeBps", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "setFeeRecipient",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_feeRecipient", type: "address" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "feeBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "feeRecipient",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "event",
+    name: "TokenListed",
+    inputs: [
+      { indexed: true, name: "listingId", type: "uint256" },
+      { indexed: true, name: "nftAddress", type: "address" },
+      { indexed: true, name: "tokenId", type: "uint256" },
+      { indexed: false, name: "seller", type: "address" },
+      { indexed: false, name: "price", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "TokenBought",
+    inputs: [
+      { indexed: true, name: "listingId", type: "uint256" },
+      { indexed: true, name: "nftAddress", type: "address" },
+      { indexed: true, name: "tokenId", type: "uint256" },
+      { indexed: false, name: "buyer", type: "address" },
+      { indexed: false, name: "seller", type: "address" },
+      { indexed: false, name: "price", type: "uint256" },
+      { indexed: false, name: "royaltyPaid", type: "uint256" },
+      { indexed: false, name: "feePaid", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "TokenListingCancelled",
+    inputs: [
+      { indexed: true, name: "listingId", type: "uint256" },
+      { indexed: true, name: "nftAddress", type: "address" },
+      { indexed: true, name: "tokenId", type: "uint256" },
+      { indexed: false, name: "seller", type: "address" },
+    ],
+  },
 ] as const;
 
 // ─── WcosStaking ABI ──────────────────────────────────────────────────────────
@@ -480,6 +557,8 @@ export const WcosGovernorABI = [
       { name: "againstVotes", type: "uint256" },
       { name: "executed", type: "bool" },
       { name: "canceled", type: "bool" },
+      { name: "queued", type: "bool" },
+      { name: "eta", type: "uint256" },
     ],
   },
   {
@@ -553,6 +632,13 @@ export const WcosGovernorABI = [
     outputs: [],
   },
   {
+    type: "function",
+    name: "queue",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "proposalId", type: "uint256" }],
+    outputs: [],
+  },
+  {
     type: "event",
     name: "ProposalCreated",
     inputs: [
@@ -573,6 +659,14 @@ export const WcosGovernorABI = [
       { indexed: true, name: "proposalId", type: "uint256" },
       { indexed: false, name: "support", type: "bool" },
       { indexed: false, name: "weight", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "ProposalQueued",
+    inputs: [
+      { indexed: true, name: "proposalId", type: "uint256" },
+      { indexed: false, name: "eta", type: "uint256" },
     ],
   },
   {

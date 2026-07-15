@@ -1,7 +1,8 @@
-import { Controller, Post, Get, Body, Param, Query, HttpCode, HttpStatus, ParseIntPipe } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiProperty } from '@nestjs/swagger';
+import { Controller, Post, Get, Body, Param, Query, HttpCode, HttpStatus, ParseIntPipe, UseGuards, Req, ForbiddenException } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiProperty, ApiHeader } from '@nestjs/swagger';
 import { NftService } from './nft.service';
 import { IsNotEmpty, IsString, IsNumber, IsOptional } from 'class-validator';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 class CreatePendingMintDto {
   @ApiProperty() @IsString() @IsNotEmpty() contractAddress: string;
@@ -35,28 +36,37 @@ export class NftController {
   constructor(private readonly nftService: NftService) {}
 
   @Post('pending')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a pending mint record before user signs transaction' })
-  createPending(@Body() dto: CreatePendingMintDto) {
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  createPending(@Body() dto: CreatePendingMintDto, @Req() req: any) {
+    if (dto.ownerAddress.toLowerCase() !== req.user.walletAddress.toLowerCase()) {
+      throw new ForbiddenException('Owner wallet address mismatch with authenticated session.');
+    }
     return this.nftService.createPendingMint(dto);
   }
 
   @Post('confirm')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirm a mint transaction after blockchain receipt' })
-  confirmMint(@Body() dto: ConfirmMintDto) {
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  confirmMint(@Body() dto: ConfirmMintDto, @Req() req: any) {
     return this.nftService.confirmMint(dto.id, {
       tokenId: dto.tokenId,
       txHash: dto.txHash,
       blockNumber: dto.blockNumber,
-    });
+    }, req.user.walletAddress);
   }
 
   @Post('failed')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark a pending mint as failed' })
-  markFailed(@Body() dto: FailedMintDto) {
-    return this.nftService.markFailed(dto.id, dto.txHash || '');
+  @ApiHeader({ name: 'Authorization', description: 'Bearer <token>' })
+  markFailed(@Body() dto: FailedMintDto, @Req() req: any) {
+    return this.nftService.markFailed(dto.id, dto.txHash || '', req.user.walletAddress);
   }
 
   @Get('history')

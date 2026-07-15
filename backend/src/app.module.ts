@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { StorageModule } from './storage/storage.module';
 import { AuthModule } from './auth/auth.module';
@@ -15,9 +17,17 @@ import { ProfileModule } from './profile/profile.module';
 import { IndexerModule } from './indexer/indexer.module';
 import { NewsModule } from './news/news.module';
 import { NftModule } from './nft/nft.module';
+import { RedisThrottlerStorage } from './common/redis-throttler.storage';
 
 @Module({
   imports: [
+    ThrottlerModule.forRoot({
+      throttlers: [{
+        ttl: 60000,  // 60-second window
+        limit: 30,   // 30 requests per window per IP
+      }],
+      storage: new RedisThrottlerStorage(),
+    }),
     PrismaModule,
     StorageModule,
     AuthModule,
@@ -36,6 +46,12 @@ import { NftModule } from './nft/nft.module';
     NftModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}
+

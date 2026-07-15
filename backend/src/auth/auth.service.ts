@@ -1,7 +1,8 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { generateNonce, SiweMessage } from 'siwe';
-import { signJwt, verifyJwt, JwtPayload } from './jwt.util';
+import { signJwt, verifyJwt } from './jwt.util';
+import * as crypto from 'crypto';
 
 export interface VerifyDto {
   walletAddress: string;
@@ -16,24 +17,39 @@ export class AuthService {
 
   /**
    * Generates a cryptographically secure SIWE nonce for a wallet address.
-   * Upserts the user record in DB and stores the active nonce.
+   * Stores the nonce hash in the DB with a 5-minute expiration.
    */
-  async getNonce(walletAddress?: string): Promise<{ nonce: string; address?: string }> {
+  async getNonce(walletAddress?: string, domain?: string): Promise<{ nonce: string; address?: string }> {
     const nonce = generateNonce();
+    const nonceHash = crypto.createHash('sha256').update(nonce).digest('hex');
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiration
+    const resolvedDomain = domain || 'localhost:3000';
 
     if (walletAddress) {
       const normalizedAddress = walletAddress.toLowerCase();
+
+      // Upsert the user to ensure a profile exists
       await this.prisma.user.upsert({
         where: { walletAddress: normalizedAddress },
         create: {
           walletAddress: normalizedAddress,
-          nonce,
           displayName: `Creator ${walletAddress.substring(0, 6)}`,
+          role: 'CREATOR',
         },
-        update: {
-          nonce,
+        update: {},
+      });
+
+      // Save the nonce hash and metadata in the database
+      await this.prisma.authenticationNonce.create({
+        data: {
+          walletAddress,
+          normalizedWallet: normalizedAddress,
+          nonceHash,
+          domain: resolvedDomain,
+          expiresAt,
         },
       });
+
       return { nonce, address: normalizedAddress };
     }
 
@@ -42,7 +58,7 @@ export class AuthService {
 
   /**
    * Verifies a SIWE message signature, validates nonce against stored DB record,
-   * clears the nonce to prevent replay attacks, and returns a signed JWT session.
+   * consumes the nonce, and registers a database-backed session.
    */
   async verifySignature(dto: VerifyDto): Promise<{
     success: boolean;
@@ -51,104 +67,141 @@ export class AuthService {
   }> {
     const { walletAddress, signature, message } = dto;
 
-    if (!walletAddress || !signature) {
-      throw new BadRequestException('Wallet address and signature are required');
+    if (!walletAddress || !signature || !message) {
+      throw new BadRequestException('Wallet address, signature, and SIWE message are required');
     }
 
     const normalizedAddress = walletAddress.toLowerCase();
 
-    // 1. Fetch user record from database
+    // 1. Parse the SIWE message
+    let siweMessage: SiweMessage;
+    try {
+      siweMessage = new SiweMessage(message);
+    } catch (err) {
+      throw new BadRequestException('Invalid SIWE message format.');
+    }
+
+    // 2. Fetch the nonce record from the DB using its hash
+    const nonceHash = crypto.createHash('sha256').update(siweMessage.nonce).digest('hex');
+    const nonceRecord = await this.prisma.authenticationNonce.findUnique({
+      where: { nonceHash },
+    });
+
+    if (!nonceRecord) {
+      throw new UnauthorizedException('Authentication nonce not found.');
+    }
+
+    // 3. Validate nonce constraints (expiration, usage)
+    if (nonceRecord.expiresAt < new Date()) {
+      throw new UnauthorizedException('Nonce has expired. Please request a new nonce.');
+    }
+
+    if (nonceRecord.consumedAt) {
+      throw new UnauthorizedException('Nonce has already been consumed. Replay attack prevented.');
+    }
+
+    // 4. Validate domain and address matches
+    if (siweMessage.address.toLowerCase() !== normalizedAddress) {
+      throw new UnauthorizedException('Signed address in SIWE message does not match requesting wallet address.');
+    }
+
+    // 5. Cryptographically verify signature
+    try {
+      const verifyResult = await siweMessage.verify({
+        signature,
+        nonce: siweMessage.nonce,
+        domain: nonceRecord.domain,
+      });
+
+      if (!verifyResult.success) {
+        throw new UnauthorizedException('Signature verification failed.');
+      }
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) throw err;
+      throw new UnauthorizedException(`SIWE cryptographic verification error: ${err.message}`);
+    }
+
+    // 6. Mark nonce as consumed (atomic-like update)
+    await this.prisma.authenticationNonce.update({
+      where: { id: nonceRecord.id },
+      data: { consumedAt: new Date() },
+    });
+
+    // 7. Fetch user and create database-backed session
     const user = await this.prisma.user.findUnique({
       where: { walletAddress: normalizedAddress },
     });
 
     if (!user) {
-      throw new UnauthorizedException('User wallet record not found. Request nonce first.');
+      throw new UnauthorizedException('User account not found.');
     }
 
-    // 2. Validate nonce against DB to prevent replay attacks
-    if (!user.nonce) {
-      throw new UnauthorizedException('Nonce has expired or already been used. Please request a new nonce.');
-    }
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const sessionTokenHash = crypto.createHash('sha256').update(sessionToken).digest('hex');
+    const sessionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days validity
 
-    let isVerified = false;
-
-    // 3. Verify SIWE message signature using siwe library
-    if (message) {
-      try {
-        const siweMessage = new SiweMessage(message);
-
-        // Verify nonce inside message matches DB stored nonce
-        if (siweMessage.nonce !== user.nonce) {
-          throw new UnauthorizedException('Expired or invalid nonce. Replay attack prevented.');
-        }
-
-        // Verify address inside message matches requesting wallet
-        if (siweMessage.address.toLowerCase() !== normalizedAddress) {
-          throw new UnauthorizedException('Signed address in SIWE message does not match wallet address.');
-        }
-
-        const verifyResult = await siweMessage.verify({
-          signature,
-          nonce: user.nonce,
-        });
-
-        if (verifyResult.success) {
-          isVerified = true;
-        }
-      } catch (err: any) {
-        if (err instanceof UnauthorizedException) throw err;
-        console.error('SIWE verification error:', err);
-      }
-    }
-
-    if (!isVerified) {
-      throw new UnauthorizedException('Signature verification failed. Invalid wallet signature.');
-    }
-
-    // 5. Prevent replay attack: clear stored nonce immediately upon successful verification
-    const updatedUser = await this.prisma.user.update({
-      where: { id: user.id },
-      data: { nonce: null },
+    await this.prisma.session.create({
+      data: {
+        sessionToken: sessionTokenHash,
+        userId: user.id,
+        expiresAt: sessionExpiresAt,
+      },
     });
 
-    // 6. Generate signed JWT token
+    // 8. Generate JWT token with session token embedded as jti
     const token = signJwt({
-      sub: updatedUser.id,
-      walletAddress: updatedUser.walletAddress,
-      role: updatedUser.role,
+      sub: user.id,
+      walletAddress: user.walletAddress,
+      role: user.role,
+      jti: sessionToken,
     });
 
     return {
       success: true,
       token,
       user: {
-        id: updatedUser.id,
-        walletAddress: updatedUser.walletAddress,
-        displayName: updatedUser.displayName,
-        avatarUrl: updatedUser.avatarUrl,
-        role: updatedUser.role,
-        createdAt: updatedUser.createdAt,
+        id: user.id,
+        walletAddress: user.walletAddress,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+        role: user.role,
+        createdAt: user.createdAt,
       },
     };
   }
 
   /**
-   * Logs out user and invalidates session token.
+   * Logs out user by revoking the active session associated with the token.
    */
-  async logout(walletAddress?: string): Promise<{ success: boolean; message: string }> {
-    if (walletAddress) {
-      const normalizedAddress = walletAddress.toLowerCase();
-      await this.prisma.user.updateMany({
-        where: { walletAddress: normalizedAddress },
-        data: { nonce: null },
-      });
+  async logout(token?: string): Promise<{ success: boolean; message: string }> {
+    if (token) {
+      const payload = verifyJwt(token);
+      if (payload && payload.jti) {
+        const sessionTokenHash = crypto.createHash('sha256').update(payload.jti).digest('hex');
+        await this.prisma.safe(() =>
+          this.prisma.session.updateMany({
+            where: { sessionToken: sessionTokenHash },
+            data: { revokedAt: new Date() },
+          }),
+        );
+      }
     }
     return { success: true, message: 'Logged out successfully' };
   }
 
   /**
-   * Resolves currently authenticated user from Bearer JWT token.
+   * Revokes all active sessions for a user.
+   */
+  async logoutAll(userId: string): Promise<{ success: boolean; message: string }> {
+    await this.prisma.session.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return { success: true, message: 'All active sessions revoked successfully' };
+  }
+
+  /**
+   * Resolves currently authenticated user from Bearer JWT token and verifies the DB session state.
    */
   async getMe(authHeader?: string): Promise<{ authenticated: boolean; user: any }> {
     if (!authHeader) {
@@ -158,9 +211,25 @@ export class AuthService {
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
     const payload = verifyJwt(token);
 
-    if (!payload) {
+    if (!payload || !payload.jti) {
       throw new UnauthorizedException('Invalid or expired authentication session token');
     }
+
+    // Verify session state in DB
+    const sessionTokenHash = crypto.createHash('sha256').update(payload.jti).digest('hex');
+    const session = await this.prisma.session.findUnique({
+      where: { sessionToken: sessionTokenHash },
+    });
+
+    if (!session || session.revokedAt || session.expiresAt < new Date()) {
+      throw new UnauthorizedException('Session has been revoked or expired.');
+    }
+
+    // Refresh last activity timestamp asynchronously
+    this.prisma.session.update({
+      where: { id: session.id },
+      data: { lastActivity: new Date() },
+    }).catch(() => {});
 
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },

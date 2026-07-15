@@ -6,6 +6,7 @@ export interface JwtPayload {
   sub: string; // user id
   walletAddress: string;
   role: string;
+  jti?: string; // session token identifier
   iat?: number;
   exp?: number;
 }
