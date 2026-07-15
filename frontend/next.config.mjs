@@ -17,7 +17,7 @@ if (process.env.NODE_ENV === 'production') {
   }
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (apiUrl && (apiUrl.includes('localhost') || apiUrl.includes('127.0.0.1'))) {
+  if (apiUrl && (apiUrl.includes('localhost') || apiUrl.includes('127.0.0.1')) && process.env.ALLOW_LOCALHOST_BUILD !== 'true') {
     console.error('\n❌ ──────────────────────────────────────────────────────────────');
     console.error('❌ FRONTEND BUILD FAILED: NEXT_PUBLIC_API_URL cannot be localhost in production.');
     console.error('❌ ──────────────────────────────────────────────────────────────\n');

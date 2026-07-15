@@ -8,7 +8,7 @@ export class OpenAiProvider implements AIImageProvider {
 
   constructor() {
     this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || '',
+      apiKey: process.env.OPENAI_API_KEY || 'dummy-key-to-prevent-startup-failure',
     });
   }
 
