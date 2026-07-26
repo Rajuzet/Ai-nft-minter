@@ -24,7 +24,13 @@ contract WcosNFTCollection is ERC721URIStorage, ERC2981, Ownable2Step {
         }
     }
 
+    mapping(uint256 => bytes32) public contentHash;
+
     function mintToken(address recipient, string memory _tokenURI) external onlyOwner returns (uint256) {
+        return mintToken(recipient, _tokenURI, bytes32(0));
+    }
+
+    function mintToken(address recipient, string memory _tokenURI, bytes32 _contentHash) public onlyOwner returns (uint256) {
         if (maxSupply > 0) {
             require(nextTokenId < maxSupply, "WcosNFTCollection: max supply reached");
         }
@@ -33,8 +39,20 @@ contract WcosNFTCollection is ERC721URIStorage, ERC2981, Ownable2Step {
         _safeMint(recipient, tokenId);
         _setTokenURI(tokenId, _tokenURI);
         
+        if (_contentHash != bytes32(0)) {
+            contentHash[tokenId] = _contentHash;
+        }
+        
         emit TokenMinted(recipient, tokenId, _tokenURI);
         return tokenId;
+    }
+
+    function verifyContent(uint256 tokenId, bytes memory assetBytes) public view returns (bool) {
+        bytes32 expected = contentHash[tokenId];
+        if (expected == bytes32(0)) {
+            return false;
+        }
+        return sha256(assetBytes) == expected;
     }
 
     function _burn(uint256 tokenId) internal virtual override(ERC721URIStorage) {

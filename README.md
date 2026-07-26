@@ -160,6 +160,21 @@ IPFS_GATEWAY_URL=https://gateway.pinata.cloud/ipfs/
 
 ---
 
+## 📊 DeFi Center 0x API & RPC Setup Guide
+
+The WCOS DeFi module leverages the **0x Swap API v2** for gas-optimized routing and unsigned swap calldata. It also reads real-time staking APY values directly from the on-chain `WcosStaking.sol` contract.
+
+### Environment Configuration in `backend/.env`:
+```env
+DEFI_ZEROX_API_KEY="your_0x_api_key_here"
+BASE_SEPOLIA_RPC_URL="https://sepolia.base.org"
+```
+
+> [!NOTE]
+> **API Key**: You can request a developer API key from the [0x Developer Dashboard](https://dashboard.0x.org/). If the 0x API fails or rate limit is hit, the backend will gracefully fall back to returning simulated swap quotes with warning labels, keeping the UI fully interactive.
+
+---
+
 ## ⛓️ Blockchain Event Indexer Setup & Testing
 
 WCOS includes an automated background event indexer that scans RPC logs and synchronizes smart contract events (`NFTMinted`, `Transfer`, `TokenListed`, `TokenBought`, `TokenListingCancelled`, `ProposalCreated`, `VoteCast`, `ProposalExecuted`) directly into the Prisma database.

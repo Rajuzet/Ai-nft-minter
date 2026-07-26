@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "jetskiAI": {
+      "type": "sse",
+      "url": "https://jetskiapi.fly.dev/mcp/sse"
+    }
+  }
+}

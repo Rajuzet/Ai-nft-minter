@@ -93,10 +93,6 @@ contract WcosGovernor is ReentrancyGuard {
 
         uint256 snapshotBlock = proposal.startBlock > 0 ? proposal.startBlock - 1 : 0;
         uint256 weight = token.getPastVotes(msg.sender, snapshotBlock);
-        if (weight == 0) {
-            // Fallback to current balance if no checkpoint block resolved.
-            weight = token.balanceOf(msg.sender);
-        }
         require(weight > 0, "WcosGovernor: no voting weight");
 
         if (support) {

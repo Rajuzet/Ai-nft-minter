@@ -8,7 +8,7 @@ contract DeployAINFTMinter is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerPrivateKey);
-        new AINFTMinter();
+        new AINFTMinter(10000);
         vm.stopBroadcast();
     }
 }

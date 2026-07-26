@@ -161,6 +161,8 @@ export const AINFTMinterABI = [
     inputs: [
       { name: "recipient", type: "address" },
       { name: "_tokenURI", type: "string" },
+      { name: "tier", type: "uint8" },
+      { name: "_contentHash", type: "bytes32" }
     ],
     outputs: [{ name: "", type: "uint256" }],
   },

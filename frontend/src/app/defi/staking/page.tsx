@@ -285,10 +285,13 @@ export default function DefiStakingPage() {
     onError: (err) => console.error("Emergency withdraw failed:", err),
   });
 
+  // NOTE (Phase 0b): The previous earned() multiplier (apy/8) was removed from the
+  // staking contract because it caused over-distribution. All stakers now earn the same
+  // flat rate from the global reward pool, regardless of lock duration. The values
+  // below are INFORMATIONAL governance targets — NOT actual accrual multipliers.
+  // Differentiated rates by lock tier require per-user rewardRate accounting (future work).
   const calculateApy = () => {
-    if (lockDuration === "30") return 8;
-    if (lockDuration === "90") return 12;
-    return 18;
+    return 8; // flat baseline — all tiers earn the same rate from the global pool
   };
 
   const calculateExpectedReturn = () => {
@@ -535,12 +538,12 @@ export default function DefiStakingPage() {
 
                     {/* Lock selector */}
                     <div className="space-y-2">
-                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">Lock duration period</label>
+                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">Lock duration (all tiers earn same pool rate)</label>
                       <div className="grid grid-cols-3 gap-2">
                         {[
-                          { val: "30", label: "30 Days (8% APY)" },
-                          { val: "90", label: "90 Days (12% APY)" },
-                          { val: "365", label: "1 Year (18% APY)" }
+                          { val: "30", label: "30 Days" },
+                          { val: "90", label: "90 Days" },
+                          { val: "365", label: "1 Year" }
                         ].map((duration) => (
                           <button
                             key={duration.val}
@@ -560,12 +563,15 @@ export default function DefiStakingPage() {
                     {/* APY yield details */}
                     <div className="p-4 bg-slate-950 border border-white/5 rounded-2xl text-xs font-mono text-slate-400 space-y-2">
                       <div className="flex justify-between">
-                        <span>Current APY Rate:</span>
-                        <span className="text-emerald-400 font-bold">{calculateApy()}% APY</span>
+                        <span>Pool Reward Rate (est.):</span>
+                        <span className="text-emerald-400 font-bold">{calculateApy()}% (governance-set, flat rate)</span>
                       </div>
                       <div className="flex justify-between">
                         <span>Est. Reward payout:</span>
                         <span className="text-white font-bold">{calculateExpectedReturn()} WGT</span>
+                      </div>
+                      <div className="text-[10px] text-slate-600 pt-1">
+                        All lock durations earn the same pro-rata pool rate. Lock length affects liquidity commitment only.
                       </div>
                     </div>
 

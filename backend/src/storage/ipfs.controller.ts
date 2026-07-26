@@ -78,6 +78,11 @@ export class UploadMetadataDto {
   @IsNumber()
   @IsOptional()
   chainId?: number;
+
+  @ApiProperty({ description: 'Content hash commitment (hex)', required: false })
+  @IsString()
+  @IsOptional()
+  contentHashCommitment?: string;
 }
 
 const ALLOWED_MIME_TYPES = [
@@ -158,12 +163,18 @@ export class IpfsController {
     // Force walletAddress to be the authenticated user's wallet
     const activeWallet = req.user.walletAddress.toLowerCase();
 
+    const extraFields: Record<string, any> = {};
+    if (dto.contentHashCommitment) {
+      extraFields.contentHashCommitment = dto.contentHashCommitment;
+    }
+
     const metadata = this.storageService.createNFTMetadata(
       dto.name,
       dto.description,
       dto.image,
       dto.attributes || [],
       dto.external_url,
+      extraFields,
     );
 
     const result = await this.storageService.uploadMetadataToIPFS(
@@ -185,6 +196,7 @@ export class IpfsController {
             originalPrompt: `User Uploaded NFT: ${dto.name}`,
             imageUrl: dto.image,
             metadataUri: result.ipfsUrl,
+            imageHash: dto.contentHashCommitment ? dto.contentHashCommitment.replace('0x', '') : undefined,
             provider: 'ipfs',
           },
         });
@@ -273,6 +285,9 @@ export class IpfsController {
     if (styleCategory) extraFields.style_category = styleCategory;
     if (chainId) extraFields.chain_id = parseInt(chainId, 10);
     extraFields.timestamp = new Date().toISOString();
+    if (imageRes.sha256HashTruncated) {
+      extraFields.contentHashCommitment = imageRes.sha256HashTruncated;
+    }
 
     const metadata = this.storageService.createNFTMetadata(
       name,

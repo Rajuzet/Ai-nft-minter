@@ -5,6 +5,8 @@ import { LlamaPriceProvider } from './llama-price-provider.service';
 import { NativeBalance, TokenBalance, WalletTransaction } from './portfolio-provider.interface';
 import { UniswapLPAdapter, AaveLendingAdapter, DeFiPosition } from './protocol-adapters';
 import { OpenOceanSwapProvider } from './openocean-swap-provider.service';
+import { ZeroxSwapProvider } from './zerox-swap-provider.service';
+import { OneInchSwapProvider } from './oneinch-swap-provider.service';
 import { SwapQuoteRequest, SwapQuoteResult } from './swap-provider.interface';
 import { createPublicClient, http, formatUnits } from 'viem';
 import { baseSepolia, base, mainnet, polygon, arbitrum, optimism } from 'viem/chains';
@@ -22,6 +24,13 @@ const WcosStakingABI = [
     name: 'earned',
     stateMutability: 'view',
     inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'getApy',
+    stateMutability: 'pure',
+    inputs: [{ name: 'lockDuration', type: 'uint256' }],
     outputs: [{ name: '', type: 'uint256' }],
   },
 ] as const;
@@ -62,6 +71,8 @@ export class DefiService {
     private readonly uniswapLPAdapter: UniswapLPAdapter,
     private readonly aaveLendingAdapter: AaveLendingAdapter,
     private readonly openoceanSwapProvider: OpenOceanSwapProvider,
+    private readonly zeroxSwapProvider: ZeroxSwapProvider,
+    private readonly oneinchSwapProvider: OneInchSwapProvider,
   ) {}
 
   private getStakingAddress(chainId: number): string | null {
@@ -108,9 +119,10 @@ export class DefiService {
       const stakingAddr = this.getStakingAddress(chainId);
       if (stakingAddr && stakingAddr !== '0x0000000000000000000000000000000000000000') {
         try {
+          const rpcUrl = chainId === 84532 ? (process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org') : undefined;
           const client = createPublicClient({
             chain: this.getViemChain(chainId),
-            transport: http(),
+            transport: http(rpcUrl),
           });
 
           const stakedRaw = await client.readContract({
@@ -167,7 +179,20 @@ export class DefiService {
             const stakedValue = (parseFloat(stakedAmount) * parseFloat(priceUsd)).toFixed(2);
             const rewardsValue = (parseFloat(rewardsAmount) * parseFloat(priceUsd)).toFixed(2);
 
-            const apyStr = lockDurationRaw === 365n ? '18% APY' : lockDurationRaw === 90n ? '12% APY' : '8% APY';
+            let apyRaw = 8n;
+            if (stakedRaw > 0n) {
+              try {
+                apyRaw = await client.readContract({
+                  address: stakingAddr as `0x${string}`,
+                  abi: WcosStakingABI,
+                  functionName: 'getApy',
+                  args: [lockDurationRaw],
+                }) as bigint;
+              } catch (err) {
+                apyRaw = lockDurationRaw === 365n ? 18n : lockDurationRaw === 90n ? 12n : 8n;
+              }
+            }
+            const apyStr = `${apyRaw}% APY`;
 
             stakingPositions.push({
               stakedToken: 'WGT',
@@ -427,38 +452,69 @@ export class DefiService {
     }
   }
 
+  private getSimulatedQuote(request: SwapQuoteRequest, fallbackReason?: string): SwapQuoteResult {
+    const expectedOut = (parseFloat(formatUnits(BigInt(request.sellAmount), 18)) * 3500).toString();
+    const minOut = (parseFloat(expectedOut) * 0.995).toString();
+
+    const warnings = ['SWAP_MOCK=true: This quote is simulated and not executable on-chain.'];
+    if (fallbackReason) {
+      warnings.push(`Fallback activated: ${fallbackReason}`);
+    }
+
+    return {
+      quoteId: `mock-${Date.now()}`,
+      provider: 'MockRouter',
+      chainId: request.chainId,
+      sellToken: request.sellToken,
+      buyToken: request.buyToken,
+      sellAmount: request.sellAmount,
+      expectedBuyAmount: expectedOut,
+      minimumReceived: minOut,
+      exchangeRate: '3500.00',
+      estimatedGas: '150000',
+      estimatedGasCostEth: '0.00015',
+      route: `${request.sellToken === 'NATIVE' ? 'ETH' : 'ERC20'} -> MockPool -> WGT`,
+      allowanceTarget: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
+      transactionTarget: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
+      transactionCalldata: '0x',
+      transactionValue: request.sellToken === 'NATIVE' ? request.sellAmount : '0',
+      quoteExpiration: Math.floor(Date.now() / 1000) + 300,
+      generatedTimestamp: Date.now(),
+      warnings,
+    };
+  }
+
   async getSwapQuote(request: SwapQuoteRequest): Promise<SwapQuoteResult> {
     // Explicit development-only mock: must set SWAP_MOCK=true in environment
     if (process.env.SWAP_MOCK === 'true') {
       this.logger.warn(`[DEV ONLY] SWAP_MOCK=true — returning simulated swap quote for chain ${request.chainId}`);
-
-      const expectedOut = (parseFloat(formatUnits(BigInt(request.sellAmount), 18)) * 3500).toString();
-      const minOut = (parseFloat(expectedOut) * 0.995).toString();
-
-      return {
-        quoteId: `mock-${Date.now()}`,
-        provider: 'MockRouter',
-        chainId: request.chainId,
-        sellToken: request.sellToken,
-        buyToken: request.buyToken,
-        sellAmount: request.sellAmount,
-        expectedBuyAmount: expectedOut,
-        minimumReceived: minOut,
-        exchangeRate: '3500.00',
-        estimatedGas: '150000',
-        estimatedGasCostEth: '0.00015',
-        route: `${request.sellToken === 'NATIVE' ? 'ETH' : 'ERC20'} -> MockPool -> WGT`,
-        allowanceTarget: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
-        transactionTarget: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
-        transactionCalldata: '0x',
-        transactionValue: request.sellToken === 'NATIVE' ? request.sellAmount : '0',
-        quoteExpiration: Math.floor(Date.now() / 1000) + 300,
-        generatedTimestamp: Date.now(),
-        warnings: ['SWAP_MOCK=true: This quote is simulated and not executable on-chain.'],
-      };
+      return this.getSimulatedQuote(request);
     }
 
-    // All chains (including testnet 84532) route through the real swap aggregator
+    // 0x Swap API path for Base Sepolia (chainId 84532)
+    if (request.chainId === 84532) {
+      try {
+        return await this.zeroxSwapProvider.getQuote(request);
+      } catch (err) {
+        this.logger.warn(`0x Swap API failed for Base Sepolia: ${err.message}`);
+        if (err.message.includes('Unsupported token pair') || err.message.includes('insufficient liquidity')) {
+          throw new BadRequestException(err.message);
+        }
+        this.logger.warn(`Falling back to simulated quote due to: ${err.message}`);
+        return this.getSimulatedQuote(request, `0x Swap API Failure: ${err.message}`);
+      }
+    }
+
+    // Use 0x Swap API for other chains if DEFI_ZEROX_API_KEY is present
+    if (process.env.DEFI_ZEROX_API_KEY && this.zeroxSwapProvider.supportsChain(request.chainId)) {
+      try {
+        return await this.zeroxSwapProvider.getQuote(request);
+      } catch (err) {
+        this.logger.warn(`0x Swap API failed for chain ${request.chainId}: ${err.message}. Falling back to OpenOcean.`);
+      }
+    }
+
+    // Fallback swap aggregator
     return this.openoceanSwapProvider.getQuote(request);
   }
 
@@ -616,9 +672,10 @@ export class DefiService {
   async getStakingPositions(walletAddress: string, chainId: number) {
     const address = walletAddress.toLowerCase();
     const pools = await this.getStakingPools(chainId);
+    const rpcUrl = chainId === 84532 ? (process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org') : undefined;
     const client = createPublicClient({
       chain: this.getViemChain(chainId),
-      transport: http(),
+      transport: http(rpcUrl),
     });
 
     for (const pool of pools) {

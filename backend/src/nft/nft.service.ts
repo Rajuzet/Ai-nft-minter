@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ethers } from 'ethers';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, http, decodeEventLog, parseAbiItem } from 'viem';
 import { baseSepolia, base, mainnet, polygon } from 'viem/chains';
 
 // Simple minimal ERC-721 ABI for reading ownerOf
@@ -90,22 +90,76 @@ export class NftService {
       throw new ForbiddenException('Access denied. You do not own this pending mint record.');
     }
 
-    // Verify on-chain receipt
+    const client = createPublicClient({
+      chain: getViemChain(record.chainId),
+      transport: http(getRpcUrl(record.chainId)),
+    });
+
     try {
-      const client = createPublicClient({
-        chain: getViemChain(record.chainId),
-        transport: http(getRpcUrl(record.chainId)),
-      });
       const receipt = await client.getTransactionReceipt({
         hash: data.txHash as `0x${string}`,
       });
-      if (receipt && receipt.status !== 'success') {
+      if (!receipt) {
+        throw new BadRequestException('Transaction receipt not found.');
+      }
+      if (receipt.status !== 'success') {
         throw new BadRequestException('Mint transaction failed on-chain.');
       }
+      if (Number(receipt.blockNumber) !== data.blockNumber) {
+        throw new BadRequestException('Transaction block number mismatch.');
+      }
+
+      let matched = false;
+      for (const log of receipt.logs) {
+        try {
+          let decoded = null;
+          try {
+            decoded = decodeEventLog({
+              abi: [parseAbiItem('event TokenMinted(address indexed recipient, uint256 indexed tokenId, string tokenURI)')],
+              data: log.data,
+              topics: log.topics,
+            });
+          } catch {
+            decoded = decodeEventLog({
+              abi: [parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)')],
+              data: log.data,
+              topics: log.topics,
+            });
+          }
+
+          if (decoded) {
+            if (decoded.eventName === 'TokenMinted') {
+              if (
+                decoded.args.recipient.toLowerCase() === record.ownerAddress.toLowerCase() &&
+                Number(decoded.args.tokenId) === data.tokenId
+              ) {
+                matched = true;
+                break;
+              }
+            } else if (decoded.eventName === 'Transfer') {
+              if (
+                decoded.args.from === '0x0000000000000000000000000000000000000000' &&
+                decoded.args.to.toLowerCase() === record.ownerAddress.toLowerCase() &&
+                Number(decoded.args.tokenId) === data.tokenId
+              ) {
+                matched = true;
+                break;
+              }
+            }
+          }
+        } catch {
+          // ignore log decoding errors from other unrelated events
+        }
+      }
+
+      if (!matched) {
+        throw new BadRequestException('Matching TokenMinted or Transfer event not found in transaction logs.');
+      }
     } catch (err: any) {
-      if (err instanceof BadRequestException) throw err;
-      this.logger.warn(`Receipt verification for mint ${data.txHash}: ${err.message}`);
-      // Allow through if receipt is not yet available (pending)
+      if (err instanceof BadRequestException || err instanceof ForbiddenException || err instanceof NotFoundException) {
+        throw err;
+      }
+      throw new BadRequestException(`On-chain mint verification failed: ${err.message}`);
     }
     
     // Check if another record already has this tokenId and contractAddress

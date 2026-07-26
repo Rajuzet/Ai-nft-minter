@@ -1,8 +1,8 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as dotenv from 'dotenv';
-import * as crypto from 'crypto';
 import { decodeEventLog } from 'viem';
+import { id as ethersId } from 'ethers';
 
 const WcosGovernorABI = [
   {
@@ -69,20 +69,81 @@ const WcosGovernanceTokenABI = [
   },
 ] as const;
 
+const WcosNFTCollectionABI = [
+  {
+    type: 'event',
+    name: 'TokenMinted',
+    inputs: [
+      { indexed: true, name: 'recipient', type: 'address' },
+      { indexed: true, name: 'tokenId', type: 'uint256' },
+      { indexed: false, name: 'tokenURI', type: 'string' },
+    ],
+  },
+] as const;
+
+const WcosMarketplaceABI = [
+  {
+    type: 'event',
+    name: 'TokenListed',
+    inputs: [
+      { indexed: true, name: 'listingId', type: 'uint256' },
+      { indexed: true, name: 'nftAddress', type: 'address' },
+      { indexed: true, name: 'tokenId', type: 'uint256' },
+      { indexed: false, name: 'seller', type: 'address' },
+      { indexed: false, name: 'price', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'TokenBought',
+    inputs: [
+      { indexed: true, name: 'listingId', type: 'uint256' },
+      { indexed: true, name: 'nftAddress', type: 'address' },
+      { indexed: true, name: 'tokenId', type: 'uint256' },
+      { indexed: false, name: 'buyer', type: 'address' },
+      { indexed: false, name: 'seller', type: 'address' },
+      { indexed: false, name: 'price', type: 'uint256' },
+      { indexed: false, name: 'royaltyPaid', type: 'uint256' },
+      { indexed: false, name: 'feePaid', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'TokenListingCancelled',
+    inputs: [
+      { indexed: true, name: 'listingId', type: 'uint256' },
+      { indexed: true, name: 'nftAddress', type: 'address' },
+      { indexed: true, name: 'tokenId', type: 'uint256' },
+      { indexed: false, name: 'seller', type: 'address' },
+    ],
+  },
+] as const;
+
+const ERC721TransferABI = [
+  {
+    type: 'event',
+    name: 'Transfer',
+    inputs: [
+      { indexed: true, name: 'from', type: 'address' },
+      { indexed: true, name: 'to', type: 'address' },
+      { indexed: true, name: 'tokenId', type: 'uint256' },
+    ],
+  },
+] as const;
+
 dotenv.config();
 
-// Helper for keccak256 topic calculation without heavy external dependencies
+// Helper for keccak256 topic calculation
 function keccak256(input: string): string {
-  // Using Node's crypto sha3-256 / keccak or standard pre-calculated hashes
   const precalculated: Record<string, string> = {
     'Transfer(address,address,uint256)': '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
-    'TokenMinted(address,uint256,string)': '0xd763138b556b6b77c3a0d507bc6e8b7c9fb38a2e1d70bb51e2c918ee08518e87',
-    'TokenListed(address,uint256,address,uint256)': '0xb8e390c5ed1033285741b6c003a276eb1c7847c20fa0ee3b9d03823f666cfb71',
-    'TokenBought(address,uint256,address,address,uint256,uint256)': '0xbcf4c6f3ad78a57193f4a0a552bf335805561fae4e5cae1a90d402ceecad7992',
-    'TokenListingCancelled(address,uint256,address)': '0x327bfcd9c1c4f526315ab3ca3f0e0c031ca3775086be51a8d0554c153835e5d3',
-    'ProposalCreated(uint256,address,address,uint256,string)': '0x7d84a6263ae0d98d3329bd7b46db7e35b719468903b4129ebf74c7e3f898305c',
-    'VoteCast(address,uint256,bool,uint256)': '0x973a968603b7454c7d0d04c45a7065961d15a51965aa376a91176e737c3584c6',
-    'ProposalExecuted(uint256)': '0x712ae1383f79ac84d188b9e0789721448b11b988f6c38221808064d1f2fd3050',
+    'TokenMinted(address,uint256,string)': '0xdf92894dc4675a7333caa5903b69cf5d8e8ec0d3f361c88207b6688e525703bb',
+    'TokenListed(uint256,address,uint256,address,uint256)': '0x3e56db1ea6c893099b769518f50273b5e3d001e5d1393079c766ef7f78c89a7f',
+    'TokenBought(uint256,address,uint256,address,address,uint256,uint256,uint256)': '0x7b1e8083eee240f84431cb3a5d585e1ac31e7aa268806dd21bdeef073bb56350',
+    'TokenListingCancelled(uint256,address,uint256,address)': '0x5f3f3b88a669dd4130b91374210c5b501c63d83c08346a61b3f0870e053d5747',
+    'ProposalCreated(uint256,address,address,uint256,string,uint256,uint256)': '0x25c32def16a6c469e0f5568c0ca1551c4f41ee022b5dedbdff982b0ffcf67304',
+    'VoteCast(address,uint256,bool,uint256)': '0x877856338e13f63d0c36822ff0ef736b80934cd90574a3a5bc9262c39d217c46',
+    'ProposalExecuted(uint256)': '0x712ae1383f79ac853f8d882153778e0260ef8f03b504e2866e0593e04d2b291f',
   };
 
   if (precalculated[input]) {
@@ -90,7 +151,7 @@ function keccak256(input: string): string {
   }
 
   try {
-    return '0x' + crypto.createHash('sha3-256').update(input).digest('hex');
+    return ethersId(input);
   } catch {
     return '0x';
   }
@@ -98,13 +159,13 @@ function keccak256(input: string): string {
 
 export const TOPICS = {
   Transfer: '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
-  TokenMinted: '0xd763138b556b6b77c3a0d507bc6e8b7c9fb38a2e1d70bb51e2c918ee08518e87',
-  TokenListed: '0xb8e390c5ed1033285741b6c003a276eb1c7847c20fa0ee3b9d03823f666cfb71',
-  TokenBought: '0xbcf4c6f3ad78a57193f4a0a552bf335805561fae4e5cae1a90d402ceecad7992',
-  TokenListingCancelled: '0x327bfcd9c1c4f526315ab3ca3f0e0c031ca3775086be51a8d0554c153835e5d3',
-  ProposalCreated: '0x7d84a6263ae0d98d3329bd7b46db7e35b719468903b4129ebf74c7e3f898305c',
-  VoteCast: '0x973a968603b7454c7d0d04c45a7065961d15a51965aa376a91176e737c3584c6',
-  ProposalExecuted: '0x712ae1383f79ac84d188b9e0789721448b11b988f6c38221808064d1f2fd3050',
+  TokenMinted: '0xdf92894dc4675a7333caa5903b69cf5d8e8ec0d3f361c88207b6688e525703bb',
+  TokenListed: '0x3e56db1ea6c893099b769518f50273b5e3d001e5d1393079c766ef7f78c89a7f',
+  TokenBought: '0x7b1e8083eee240f84431cb3a5d585e1ac31e7aa268806dd21bdeef073bb56350',
+  TokenListingCancelled: '0x5f3f3b88a669dd4130b91374210c5b501c63d83c08346a61b3f0870e053d5747',
+  ProposalCreated: '0x25c32def16a6c469e0f5568c0ca1551c4f41ee022b5dedbdff982b0ffcf67304',
+  VoteCast: '0x877856338e13f63d0c36822ff0ef736b80934cd90574a3a5bc9262c39d217c46',
+  ProposalExecuted: '0x712ae1383f79ac853f8d882153778e0260ef8f03b504e2866e0593e04d2b291f',
 };
 
 export interface IndexerStatus {
@@ -355,348 +416,362 @@ export class IndexerService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
 
-    const topic0 = log.topics[0];
     let eventName = 'Unknown';
     let dataJson = '{}';
 
-    // 2. Classify and handle log event
-    if (topic0 === TOPICS.Transfer && log.topics.length >= 4) {
-      eventName = 'Transfer';
-      const from = '0x' + log.topics[1].slice(26);
-      const to = '0x' + log.topics[2].slice(26);
-      const tokenId = parseInt(log.topics[3], 16);
+    // 2. Decode using viem and all contract ABIs
+    let decoded = null;
+    try {
+      decoded = decodeEventLog({
+        abi: [
+          ...ERC721TransferABI,
+          ...WcosNFTCollectionABI,
+          ...WcosMarketplaceABI,
+          ...WcosGovernorABI,
+          ...WcosGovernanceTokenABI,
+        ],
+        data: log.data,
+        topics: log.topics,
+      });
+    } catch (err) {
+      // Event not recognized by any of our contract ABIs
+    }
 
-      dataJson = JSON.stringify({ from, to, tokenId });
+    if (decoded) {
+      eventName = decoded.eventName;
+      const args = decoded.args as any;
 
-      // Create or update IndexedNft token
-      await this.prisma.indexedNft.upsert({
-        where: {
-          contractAddress_tokenId: {
+      if (eventName === 'Transfer') {
+        const from = args.from.toLowerCase();
+        const to = args.to.toLowerCase();
+        const tokenId = Number(args.tokenId);
+
+        dataJson = JSON.stringify({ from, to, tokenId });
+
+        // Create or update IndexedNft token
+        await this.prisma.indexedNft.upsert({
+          where: {
+            contractAddress_tokenId: {
+              contractAddress,
+              tokenId,
+            },
+          },
+          update: {
+            ownerAddress: to,
+            blockNumber,
+            txHash,
+          },
+          create: {
             contractAddress,
             tokenId,
+            ownerAddress: to,
+            minterAddress: from === '0x0000000000000000000000000000000000000000' ? to : from,
+            blockNumber,
+            txHash,
           },
-        },
-        update: {
-          ownerAddress: to.toLowerCase(),
-          blockNumber,
-          txHash,
-        },
-        create: {
-          contractAddress,
-          tokenId,
-          ownerAddress: to.toLowerCase(),
-          minterAddress: from === '0x0000000000000000000000000000000000000000' ? to.toLowerCase() : from.toLowerCase(),
-          blockNumber,
-          txHash,
-        },
-      });
-    } else if (topic0 === TOPICS.TokenListed && log.topics.length >= 4) {
-      eventName = 'TokenListed';
-      const nftAddress = ('0x' + log.topics[1].slice(26)).toLowerCase();
-      const tokenId = parseInt(log.topics[2], 16);
-      const seller = ('0x' + log.topics[3].slice(26)).toLowerCase();
-      const priceWei = parseInt(log.data, 16).toString();
-
-      dataJson = JSON.stringify({ nftAddress, tokenId, seller, priceWei });
-
-      // Upsert MarketplaceListing record
-      await this.prisma.marketplaceListing.upsert({
-        where: { id: `${nftAddress}-${tokenId}` },
-        update: {
-          status: 'ACTIVE',
-          sellerId: seller,
-          price: (parseInt(priceWei, 10) / 1e18).toString(),
-          txHash,
-        },
-        create: {
-          id: `${nftAddress}-${tokenId}`,
-          nftAddress,
-          tokenId,
-          sellerId: seller,
-          price: (parseInt(priceWei, 10) / 1e18).toString(),
-          collectionName: 'AI Studio Collective',
-          chain: this.network,
-          imageUrl: 'https://gateway.pinata.cloud/ipfs/QmSimulatedHash',
-          name: `NFT #${tokenId}`,
-          description: 'On-chain indexed marketplace listing',
-          status: 'ACTIVE',
-          txHash,
-        },
-      });
-    } else if (topic0 === TOPICS.TokenBought && log.topics.length >= 4) {
-      eventName = 'TokenBought';
-      const nftAddress = ('0x' + log.topics[1].slice(26)).toLowerCase();
-      const tokenId = parseInt(log.topics[2], 16);
-      const buyer = ('0x' + log.topics[3].slice(26)).toLowerCase();
-
-      dataJson = JSON.stringify({ nftAddress, tokenId, buyer });
-
-      // Mark marketplace listing as BOUGHT and record NftSale
-      await this.prisma.marketplaceListing.updateMany({
-        where: { nftAddress, tokenId, status: 'ACTIVE' },
-        data: { status: 'BOUGHT', buyerId: buyer, txHash },
-      });
-
-      await this.prisma.nftSale.create({
-        data: {
-          nftAddress,
-          tokenId,
-          sellerAddress: contractAddress,
-          buyerAddress: buyer,
-          price: '0.05',
-          txHash,
-          blockNumber,
-        },
-      });
-    } else if (topic0 === TOPICS.TokenListingCancelled && log.topics.length >= 4) {
-      eventName = 'TokenListingCancelled';
-      const nftAddress = ('0x' + log.topics[1].slice(26)).toLowerCase();
-      const tokenId = parseInt(log.topics[2], 16);
-
-      dataJson = JSON.stringify({ nftAddress, tokenId });
-
-      await this.prisma.marketplaceListing.updateMany({
-        where: { nftAddress, tokenId, status: 'ACTIVE' },
-        data: { status: 'CANCELLED', txHash },
-      });
-    } else {
-      let decodedGovEvent = null;
-      try {
-        decodedGovEvent = decodeEventLog({
-          abi: [...WcosGovernorABI, ...WcosGovernanceTokenABI],
-          data: log.data,
-          topics: log.topics,
         });
-      } catch {
-        // Not a governance event
-      }
+      } else if (eventName === 'TokenMinted') {
+        const recipient = args.recipient.toLowerCase();
+        const tokenId = Number(args.tokenId);
+        const tokenURI = args.tokenURI;
+        dataJson = JSON.stringify({ recipient, tokenId, tokenURI });
+      } else if (eventName === 'TokenListed') {
+        const listingId = args.listingId.toString();
+        const nftAddress = args.nftAddress.toLowerCase();
+        const tokenId = Number(args.tokenId);
+        const seller = args.seller.toLowerCase();
+        const priceWei = args.price.toString();
 
-      if (decodedGovEvent) {
-        eventName = decodedGovEvent.eventName;
-        const args = decodedGovEvent.args as any;
+        dataJson = JSON.stringify({ listingId, nftAddress, tokenId, seller, priceWei });
 
-        if (eventName === 'ProposalCreated') {
-          const onChainProposalId = args.proposalId.toString();
-          const proposer = args.proposer.toLowerCase();
-          const target = args.target.toLowerCase();
-          const value = args.value.toString();
-          const description = args.description;
-          const startBlock = args.startBlock.toString();
-          const endBlock = args.endBlock.toString();
+        // Upsert MarketplaceListing record
+        await this.prisma.marketplaceListing.upsert({
+          where: { id: `${nftAddress}-${tokenId}` },
+          update: {
+            status: 'ACTIVE',
+            sellerId: seller,
+            price: (parseFloat(priceWei) / 1e18).toString(),
+            txHash,
+            onChainListingId: Number(listingId),
+          },
+          create: {
+            id: `${nftAddress}-${tokenId}`,
+            nftAddress,
+            tokenId,
+            sellerId: seller,
+            price: (parseFloat(priceWei) / 1e18).toString(),
+            collectionName: 'AI Studio Collective',
+            chain: this.network,
+            imageUrl: 'https://gateway.pinata.cloud/ipfs/QmSimulatedHash',
+            name: `NFT #${tokenId}`,
+            description: 'On-chain indexed marketplace listing',
+            status: 'ACTIVE',
+            txHash,
+            onChainListingId: Number(listingId),
+          },
+        });
+      } else if (eventName === 'TokenBought') {
+        const listingId = args.listingId.toString();
+        const nftAddress = args.nftAddress.toLowerCase();
+        const tokenId = Number(args.tokenId);
+        const buyer = args.buyer.toLowerCase();
+        const seller = args.seller.toLowerCase();
+        const priceWei = args.price.toString();
+        const royaltyPaid = args.royaltyPaid.toString();
+        const feePaid = args.feePaid.toString();
 
-          dataJson = JSON.stringify({ onChainProposalId, proposer, target, value, description, startBlock, endBlock });
+        dataJson = JSON.stringify({ listingId, nftAddress, tokenId, buyer, seller, priceWei, royaltyPaid, feePaid });
 
+        // Mark marketplace listing as BOUGHT and record NftSale
+        await this.prisma.marketplaceListing.updateMany({
+          where: { nftAddress, tokenId, status: 'ACTIVE' },
+          data: { status: 'BOUGHT', buyerId: buyer, txHash },
+        });
+
+        await this.prisma.nftSale.create({
+          data: {
+            nftAddress,
+            tokenId,
+            sellerAddress: seller,
+            buyerAddress: buyer,
+            price: (parseFloat(priceWei) / 1e18).toString(),
+            txHash,
+            blockNumber,
+          },
+        });
+      } else if (eventName === 'TokenListingCancelled') {
+        const listingId = args.listingId.toString();
+        const nftAddress = args.nftAddress.toLowerCase();
+        const tokenId = Number(args.tokenId);
+        const seller = args.seller.toLowerCase();
+
+        dataJson = JSON.stringify({ listingId, nftAddress, tokenId, seller });
+
+        await this.prisma.marketplaceListing.updateMany({
+          where: { nftAddress, tokenId, status: 'ACTIVE' },
+          data: { status: 'CANCELLED', txHash },
+        });
+      } else if (eventName === 'ProposalCreated') {
+        const onChainProposalId = args.proposalId.toString();
+        const proposer = args.proposer.toLowerCase();
+        const target = args.target.toLowerCase();
+        const value = args.value.toString();
+        const description = args.description;
+        const startBlock = args.startBlock.toString();
+        const endBlock = args.endBlock.toString();
+
+        dataJson = JSON.stringify({ onChainProposalId, proposer, target, value, description, startBlock, endBlock });
+
+        let user = await this.prisma.user.findUnique({
+          where: { walletAddress: proposer },
+        });
+        if (!user) {
+          user = await this.prisma.user.create({
+            data: { walletAddress: proposer },
+          });
+        }
+
+        let dao = await this.prisma.daoOrganization.findFirst({
+          where: { chainId: this.chainId },
+        });
+        if (!dao) {
+          dao = await this.prisma.daoOrganization.create({
+            data: {
+              name: 'WCOS DAO Governance',
+              description: 'On-chain governance for the WCOS protocol',
+              govType: 'Token-weighted',
+              votingToken: 'WGT',
+              threshold: 1,
+              quorum: 10,
+              duration: 100,
+              treasuryAddress: '0x0000000000000000000000000000000000000000',
+              chainId: this.chainId,
+            },
+          });
+        }
+
+        const existingProp = await this.prisma.daoProposal.findFirst({
+          where: {
+            OR: [
+              { proposalId: onChainProposalId, chainId: this.chainId },
+              { creationTransactionHash: txHash },
+            ]
+          }
+        });
+
+        if (existingProp) {
+          await this.prisma.daoProposal.update({
+            where: { id: existingProp.id },
+            data: {
+              proposalId: onChainProposalId,
+              snapshotBlock: startBlock,
+              deadlineBlock: endBlock,
+              status: 'ACTIVE',
+              governorContract: contractAddress,
+            }
+          });
+        } else {
+          const title = description.split('\n')[0].slice(0, 100) || 'On-chain Proposal';
+          await this.prisma.daoProposal.create({
+            data: {
+              daoId: dao.id,
+              proposerId: user.id,
+              proposalId: onChainProposalId,
+              title,
+              summary: title,
+              description,
+              targetAddress: target,
+              valueTransferred: value,
+              snapshotBlock: startBlock,
+              deadlineBlock: endBlock,
+              status: 'ACTIVE',
+              chainId: this.chainId,
+              creationTransactionHash: txHash,
+              governorContract: contractAddress,
+            }
+          });
+        }
+      } else if (eventName === 'VoteCast') {
+        const voter = args.voter.toLowerCase();
+        const onChainProposalId = args.proposalId.toString();
+        const support = args.support;
+        const weight = args.weight.toString();
+
+        dataJson = JSON.stringify({ voter, onChainProposalId, support, weight });
+
+        const proposal = await this.prisma.daoProposal.findFirst({
+          where: { proposalId: onChainProposalId, chainId: this.chainId },
+        });
+
+        if (proposal) {
           let user = await this.prisma.user.findUnique({
-            where: { walletAddress: proposer },
+            where: { walletAddress: voter },
           });
           if (!user) {
             user = await this.prisma.user.create({
-              data: { walletAddress: proposer },
+              data: { walletAddress: voter },
             });
           }
 
-          let dao = await this.prisma.daoOrganization.findFirst({
-            where: { chainId: this.chainId },
-          });
-          if (!dao) {
-            dao = await this.prisma.daoOrganization.create({
-              data: {
-                name: 'WCOS DAO Governance',
-                description: 'On-chain governance for the WCOS protocol',
-                govType: 'Token-weighted',
-                votingToken: 'WGT',
-                threshold: 1,
-                quorum: 10,
-                duration: 100,
-                treasuryAddress: '0x0000000000000000000000000000000000000000',
-                chainId: this.chainId,
-              },
-            });
-          }
-
-          const existingProp = await this.prisma.daoProposal.findFirst({
+          await this.prisma.daoVote.upsert({
             where: {
-              OR: [
-                { proposalId: onChainProposalId, chainId: this.chainId },
-                { creationTransactionHash: txHash },
-              ]
-            }
-          });
-
-          if (existingProp) {
-            await this.prisma.daoProposal.update({
-              where: { id: existingProp.id },
-              data: {
-                proposalId: onChainProposalId,
-                snapshotBlock: startBlock,
-                deadlineBlock: endBlock,
-                status: 'ACTIVE',
-                governorContract: contractAddress,
-              }
-            });
-          } else {
-            const title = description.split('\n')[0].slice(0, 100) || 'On-chain Proposal';
-            await this.prisma.daoProposal.create({
-              data: {
-                daoId: dao.id,
-                proposerId: user.id,
-                proposalId: onChainProposalId,
-                title,
-                summary: title,
-                description,
-                targetAddress: target,
-                valueTransferred: value,
-                snapshotBlock: startBlock,
-                deadlineBlock: endBlock,
-                status: 'ACTIVE',
-                chainId: this.chainId,
-                creationTransactionHash: txHash,
-                governorContract: contractAddress,
-              }
-            });
-          }
-        } else if (eventName === 'VoteCast') {
-          const voter = args.voter.toLowerCase();
-          const onChainProposalId = args.proposalId.toString();
-          const support = args.support;
-          const weight = args.weight.toString();
-
-          dataJson = JSON.stringify({ voter, onChainProposalId, support, weight });
-
-          const proposal = await this.prisma.daoProposal.findFirst({
-            where: { proposalId: onChainProposalId, chainId: this.chainId },
-          });
-
-          if (proposal) {
-            let user = await this.prisma.user.findUnique({
-              where: { walletAddress: voter },
-            });
-            if (!user) {
-              user = await this.prisma.user.create({
-                data: { walletAddress: voter },
-              });
-            }
-
-            await this.prisma.daoVote.upsert({
-              where: {
-                proposalId_voterId: {
-                  proposalId: proposal.id,
-                  voterId: user.id,
-                }
-              },
-              update: {
-                weight,
-                support,
-                transactionHash: txHash,
-                blockNumber,
-                status: 'CONFIRMED',
-              },
-              create: {
+              proposalId_voterId: {
                 proposalId: proposal.id,
                 voterId: user.id,
-                chainId: this.chainId,
-                support,
-                weight,
-                transactionHash: txHash,
-                blockNumber,
-                status: 'CONFIRMED',
               }
-            });
-
-            const allVotes = await this.prisma.daoVote.findMany({
-              where: { proposalId: proposal.id, status: 'CONFIRMED' },
-            });
-            const forVotes = allVotes
-              .filter(v => v.support)
-              .reduce((acc, v) => acc + BigInt(v.weight), BigInt(0))
-              .toString();
-            const againstVotes = allVotes
-              .filter(v => !v.support)
-              .reduce((acc, v) => acc + BigInt(v.weight), BigInt(0))
-              .toString();
-
-            await this.prisma.daoProposal.update({
-              where: { id: proposal.id },
-              data: { forVotes, againstVotes },
-            });
-          }
-        } else if (eventName === 'ProposalExecuted') {
-          const onChainProposalId = args.proposalId.toString();
-          dataJson = JSON.stringify({ onChainProposalId });
-
-          const proposal = await this.prisma.daoProposal.findFirst({
-            where: { proposalId: onChainProposalId, chainId: this.chainId },
-          });
-          if (proposal) {
-            await this.prisma.daoProposal.update({
-              where: { id: proposal.id },
-              data: {
-                status: 'EXECUTED',
-                executionTransactionHash: txHash,
-              }
-            });
-          }
-        } else if (eventName === 'ProposalQueued') {
-          const onChainProposalId = args.proposalId.toString();
-          dataJson = JSON.stringify({ onChainProposalId });
-
-          const proposal = await this.prisma.daoProposal.findFirst({
-            where: { proposalId: onChainProposalId, chainId: this.chainId },
-          });
-          if (proposal) {
-            await this.prisma.daoProposal.update({
-              where: { id: proposal.id },
-              data: {
-                status: 'QUEUED',
-              }
-            });
-          }
-        } else if (eventName === 'ProposalCanceled') {
-          const onChainProposalId = args.proposalId.toString();
-          dataJson = JSON.stringify({ onChainProposalId });
-
-          const proposal = await this.prisma.daoProposal.findFirst({
-            where: { proposalId: onChainProposalId, chainId: this.chainId },
-          });
-          if (proposal) {
-            await this.prisma.daoProposal.update({
-              where: { id: proposal.id },
-              data: {
-                status: 'CANCELED',
-                cancellationTransactionHash: txHash,
-              }
-            });
-          }
-        } else if (eventName === 'DelegateChanged') {
-          const delegator = args.delegator.toLowerCase();
-          const toDelegate = args.toDelegate.toLowerCase();
-          dataJson = JSON.stringify({ delegator, toDelegate });
-
-          await this.prisma.governanceDelegation.create({
-            data: {
-              walletAddress: delegator,
-              delegateAddress: toDelegate,
-              chainId: this.chainId,
-              votingPower: '0',
+            },
+            update: {
+              weight,
+              support,
               transactionHash: txHash,
               blockNumber,
+              status: 'CONFIRMED',
+            },
+            create: {
+              proposalId: proposal.id,
+              voterId: user.id,
+              chainId: this.chainId,
+              support,
+              weight,
+              transactionHash: txHash,
+              blockNumber,
+              status: 'CONFIRMED',
             }
           });
-        } else if (eventName === 'DelegateVotesChanged') {
-          const delegatee = args.delegate.toLowerCase();
-          const newBalance = args.newBalance.toString();
-          dataJson = JSON.stringify({ delegatee, newBalance });
 
-          const latestDelegation = await this.prisma.governanceDelegation.findFirst({
-            where: { delegateAddress: delegatee, chainId: this.chainId },
-            orderBy: { createdAt: 'desc' },
+          const allVotes = await this.prisma.daoVote.findMany({
+            where: { proposalId: proposal.id, status: 'CONFIRMED' },
           });
-          if (latestDelegation) {
-            await this.prisma.governanceDelegation.update({
-              where: { id: latestDelegation.id },
-              data: { votingPower: newBalance },
-            });
+          const forVotes = allVotes
+            .filter(v => v.support)
+            .reduce((acc, v) => acc + BigInt(v.weight), BigInt(0))
+            .toString();
+          const againstVotes = allVotes
+            .filter(v => !v.support)
+            .reduce((acc, v) => acc + BigInt(v.weight), BigInt(0))
+            .toString();
+
+          await this.prisma.daoProposal.update({
+            where: { id: proposal.id },
+            data: { forVotes, againstVotes },
+          });
+        }
+      } else if (eventName === 'ProposalExecuted') {
+        const onChainProposalId = args.proposalId.toString();
+        dataJson = JSON.stringify({ onChainProposalId });
+
+        const proposal = await this.prisma.daoProposal.findFirst({
+          where: { proposalId: onChainProposalId, chainId: this.chainId },
+        });
+        if (proposal) {
+          await this.prisma.daoProposal.update({
+            where: { id: proposal.id },
+            data: {
+              status: 'EXECUTED',
+              executionTransactionHash: txHash,
+            }
+          });
+        }
+      } else if (eventName === 'ProposalQueued') {
+        const onChainProposalId = args.proposalId.toString();
+        dataJson = JSON.stringify({ onChainProposalId });
+
+        const proposal = await this.prisma.daoProposal.findFirst({
+          where: { proposalId: onChainProposalId, chainId: this.chainId },
+        });
+        if (proposal) {
+          await this.prisma.daoProposal.update({
+            where: { id: proposal.id },
+            data: {
+              status: 'QUEUED',
+            }
+          });
+        }
+      } else if (eventName === 'ProposalCanceled') {
+        const onChainProposalId = args.proposalId.toString();
+        dataJson = JSON.stringify({ onChainProposalId });
+
+        const proposal = await this.prisma.daoProposal.findFirst({
+          where: { proposalId: onChainProposalId, chainId: this.chainId },
+        });
+        if (proposal) {
+          await this.prisma.daoProposal.update({
+            where: { id: proposal.id },
+            data: {
+              status: 'CANCELED',
+              cancellationTransactionHash: txHash,
+            }
+          });
+        }
+      } else if (eventName === 'DelegateChanged') {
+        const delegator = args.delegator.toLowerCase();
+        const toDelegate = args.toDelegate.toLowerCase();
+        dataJson = JSON.stringify({ delegator, toDelegate });
+
+        await this.prisma.governanceDelegation.create({
+          data: {
+            walletAddress: delegator,
+            delegateAddress: toDelegate,
+            chainId: this.chainId,
+            votingPower: '0',
+            transactionHash: txHash,
+            blockNumber,
           }
+        });
+      } else if (eventName === 'DelegateVotesChanged') {
+        const delegatee = args.delegate.toLowerCase();
+        const newBalance = args.newBalance.toString();
+        dataJson = JSON.stringify({ delegatee, newBalance });
+
+        const latestDelegation = await this.prisma.governanceDelegation.findFirst({
+          where: { delegateAddress: delegatee, chainId: this.chainId },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (latestDelegation) {
+          await this.prisma.governanceDelegation.update({
+            where: { id: latestDelegation.id },
+            data: { votingPower: newBalance },
+          });
         }
       }
     }

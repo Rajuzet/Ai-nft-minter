@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CollectionRecord {
@@ -42,7 +42,10 @@ export class CollectionsService {
   };
 
   async create(dto: Omit<CollectionRecord, 'id' | 'timestamp'>, ownerWalletAddress?: string): Promise<CollectionRecord> {
-    const wallet = ownerWalletAddress ? ownerWalletAddress.toLowerCase() : '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266';
+    if (!ownerWalletAddress) {
+      throw new BadRequestException('Owner wallet address is required.');
+    }
+    const wallet = ownerWalletAddress.toLowerCase();
     
     let user = await this.prisma.user.findUnique({
       where: { walletAddress: wallet },
@@ -157,7 +160,7 @@ export class CollectionsService {
       throw new NotFoundException(`Collection with ID ${id} not found.`);
     }
 
-    if (ownerWalletAddress && collection.owner?.walletAddress.toLowerCase() !== ownerWalletAddress.toLowerCase()) {
+    if (!ownerWalletAddress || !collection.owner || collection.owner.walletAddress.toLowerCase() !== ownerWalletAddress.toLowerCase()) {
       throw new ForbiddenException('You do not own this collection.');
     }
 

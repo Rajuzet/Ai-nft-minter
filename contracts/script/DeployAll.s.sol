@@ -67,7 +67,7 @@ contract DeployAll is Script {
             treasury = new WcosTreasury(address(timelock));
             console.log("WcosTreasury deployed at:", address(treasury));
 
-            minter = new AINFTMinter();
+            minter = new AINFTMinter(10000);
             console.log("AINFTMinter deployed at:", address(minter));
 
             marketplace = new WcosMarketplace();

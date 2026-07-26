@@ -107,7 +107,18 @@ export class MarketplaceService {
               data: log.data,
               topics: log.topics,
             });
-            if (decoded.eventName === 'TokenListed') {
+            if (
+              decoded.eventName === 'TokenListed' &&
+              decoded.args.nftAddress.toLowerCase() === dto.nftAddress.toLowerCase() &&
+              Number(decoded.args.tokenId) === dto.tokenId &&
+              decoded.args.seller.toLowerCase() === dto.seller.toLowerCase()
+            ) {
+              const eventPrice = decoded.args.price;
+              const expectedPrice = BigInt(Math.round(parseFloat(dto.price) * 1e18));
+              const diff = eventPrice > expectedPrice ? eventPrice - expectedPrice : expectedPrice - eventPrice;
+              if (diff > 1000n) {
+                throw new BadRequestException(`Price mismatch. On-chain: ${eventPrice.toString()} wei, expected: ${expectedPrice.toString()} wei`);
+              }
               onChainListingId = Number(decoded.args.listingId);
               break;
             }
@@ -115,9 +126,13 @@ export class MarketplaceService {
             // Ignore other events
           }
         }
-      } catch (err) {
+
+        if (onChainListingId === undefined) {
+          throw new BadRequestException('TokenListed event matching nftAddress, tokenId, and seller not found in transaction logs');
+        }
+      } catch (err: any) {
         this.logger.error(`Error verifying transaction: ${err.message}`);
-        throw new BadRequestException('Invalid transaction hash or receipt not found');
+        throw new BadRequestException(err.message || 'Invalid transaction hash or receipt not found');
       }
     }
 
@@ -174,7 +189,7 @@ export class MarketplaceService {
       });
     }
 
-    const listing = await this.prisma.marketplaceListing.findUnique({ where: { id } });
+    const listing = await this.prisma.marketplaceListing.findUnique({ where: { id }, include: { seller: true } });
     if (!listing) throw new NotFoundException('Listing not found');
 
     const client = createPublicClient({
@@ -187,8 +202,35 @@ export class MarketplaceService {
       if (receipt.status !== 'success') {
         throw new BadRequestException('Transaction failed on-chain');
       }
-    } catch (err) {
-      throw new BadRequestException('Invalid transaction hash or receipt not found');
+
+      let matched = false;
+      for (const log of receipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: [parseAbiItem('event TokenBought(uint256 indexed listingId, address indexed nftAddress, uint256 indexed tokenId, address buyer, address seller, uint256 price, uint256 royaltyPaid, uint256 feePaid)')],
+            data: log.data,
+            topics: log.topics,
+          });
+          if (
+            decoded.eventName === 'TokenBought' &&
+            decoded.args.nftAddress.toLowerCase() === listing.nftAddress.toLowerCase() &&
+            Number(decoded.args.tokenId) === listing.tokenId &&
+            decoded.args.buyer.toLowerCase() === buyerAddress.toLowerCase() &&
+            decoded.args.seller.toLowerCase() === listing.seller.walletAddress.toLowerCase()
+          ) {
+            matched = true;
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!matched) {
+        throw new BadRequestException('TokenBought event matching nftAddress, tokenId, buyer, and seller not found in transaction logs');
+      }
+    } catch (err: any) {
+      throw new BadRequestException(err.message || 'Invalid transaction hash or receipt not found');
     }
 
     const updated = await this.prisma.marketplaceListing.update({
@@ -234,7 +276,7 @@ export class MarketplaceService {
     const listing = await this.prisma.marketplaceListing.findUnique({ where: { id }, include: { seller: true } });
     if (!listing) throw new NotFoundException('Listing not found');
 
-    if (sellerWalletAddress && listing.seller?.walletAddress.toLowerCase() !== sellerWalletAddress.toLowerCase()) {
+    if (!sellerWalletAddress || !listing.seller || listing.seller.walletAddress.toLowerCase() !== sellerWalletAddress.toLowerCase()) {
       throw new ForbiddenException('You do not own this listing and cannot cancel it.');
     }
 

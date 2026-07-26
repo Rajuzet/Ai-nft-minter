@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, http, decodeEventLog, parseAbiItem } from 'viem';
 import { baseSepolia, base, mainnet, polygon, arbitrum, optimism } from 'viem/chains';
 
 // Governor contract ABI for on-chain state queries
@@ -266,6 +266,45 @@ export class DaoService {
   }
 
   async registerProposal(dto: RegisterProposalDto) {
+    const client = createPublicClient({
+      chain: getViemChain(dto.chainId),
+      transport: http(getRpcUrl(dto.chainId)),
+    });
+
+    try {
+      const receipt = await client.getTransactionReceipt({ hash: dto.creationTransactionHash as `0x${string}` });
+      if (receipt.status !== 'success') {
+        throw new BadRequestException('Proposal creation transaction failed on-chain');
+      }
+
+      let matched = false;
+      for (const log of receipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: [parseAbiItem('event ProposalCreated(uint256 indexed proposalId, address indexed proposer, address target, uint256 value, string description, uint256 startBlock, uint256 endBlock)')],
+            data: log.data,
+            topics: log.topics,
+          });
+          if (
+            decoded.eventName === 'ProposalCreated' &&
+            decoded.args.proposalId.toString() === dto.onChainProposalId &&
+            decoded.args.proposer.toLowerCase() === dto.walletAddress.toLowerCase()
+          ) {
+            matched = true;
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!matched) {
+        throw new BadRequestException('ProposalCreated event not found or proposalId mismatch in transaction logs');
+      }
+    } catch (err: any) {
+      throw new BadRequestException(`On-chain proposal verification failed: ${err.message}`);
+    }
+
     // Upsert user
     let user = await this.prisma.user.findUnique({
       where: { walletAddress: dto.walletAddress.toLowerCase() },
@@ -383,6 +422,41 @@ export class DaoService {
   // ─── Votes ───────────────────────────────────────────────────────────────────
 
   async registerVote(dto: RegisterVoteDto) {
+    const client = createPublicClient({
+      chain: getViemChain(dto.chainId),
+      transport: http(getRpcUrl(dto.chainId)),
+    });
+
+    try {
+      const receipt = await client.getTransactionReceipt({ hash: dto.transactionHash as `0x${string}` });
+      if (receipt.status !== 'success') {
+        throw new BadRequestException('Vote transaction failed on-chain');
+      }
+
+      let matched = false;
+      for (const log of receipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: [parseAbiItem('event VoteCast(address indexed voter, uint256 indexed proposalId, bool support, uint256 weight)')],
+            data: log.data,
+            topics: log.topics,
+          });
+          if (decoded.eventName === 'VoteCast' && decoded.args.proposalId.toString() === dto.onChainProposalId && decoded.args.voter.toLowerCase() === dto.walletAddress.toLowerCase()) {
+            matched = true;
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!matched) {
+        throw new BadRequestException('VoteCast event not found or voter/proposalId mismatch in transaction logs');
+      }
+    } catch (err: any) {
+      throw new BadRequestException(`On-chain vote verification failed: ${err.message}`);
+    }
+
     // Upsert user
     let user = await this.prisma.user.findUnique({
       where: { walletAddress: dto.walletAddress.toLowerCase() },

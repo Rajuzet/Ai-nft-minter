@@ -4,8 +4,36 @@ pragma solidity 0.8.20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
+/**
+ * @title WcosGovernanceToken
+ * @notice ERC-20 governance token with Compound-style on-chain checkpoints.
+ *
+ * DELEGATION SEMANTICS
+ * ─────────────────────
+ * Following OpenZeppelin ERC20Votes semantics, token balance does NOT
+ * automatically confer voting power.  A holder must call delegate() to
+ * activate their checkpoint.  This is intentional: it makes transfers
+ * cheaper (no checkpoint write on every transfer for undelegated holders).
+ *
+ * AUTO-DELEGATION ON MINT
+ * ───────────────────────
+ * The owner-callable mint() function auto-self-delegates the recipient.
+ * This ensures newly minted tokens are immediately usable for governance
+ * without requiring an extra transaction.  It mirrors the behaviour of
+ * OZ ERC20Votes when users explicitly call delegate(self).
+ *
+ * The constructor-minted initial supply is NOT auto-delegated; the deployer
+ * must call delegate() explicitly.  This matches standard practice and
+ * avoids surprising checkpoint writes during deployment.
+ *
+ * NON-DELEGATION
+ * ──────────────
+ * A holder who has never called delegate() (and has not received a mint()
+ * post-deployment) has 0 voting weight.  This is correct and intentional —
+ * it prevents stale or transferred tokens from silently accumulating power.
+ */
 contract WcosGovernanceToken is ERC20, Ownable2Step {
-    
+
     struct Checkpoint {
         uint32 fromBlock;
         uint256 votes;
@@ -20,17 +48,33 @@ contract WcosGovernanceToken is ERC20, Ownable2Step {
 
     constructor(string memory name, string memory symbol, uint256 initialSupply) ERC20(name, symbol) {
         _mint(msg.sender, initialSupply);
+        // Initial supply goes to deployer without auto-delegation;
+        // deployer calls delegate() explicitly.
     }
 
+    /**
+     * @notice Mint `amount` tokens to `to` and auto-self-delegate so the
+     *         recipient has immediate voting power without a separate tx.
+     * @dev    Only callable by owner (DAO / multisig).
+     */
     function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
+        // Auto-self-delegate if the recipient has no prior delegation.
+        // This mirrors what the user would do in a separate delegate(self) call.
+        if (delegates[to] == address(0)) {
+            _delegate(to, to);
+        }
     }
 
     function delegate(address delegatee) external {
-        address currentDelegate = delegates[msg.sender];
-        delegates[msg.sender] = delegatee;
-        emit DelegateChanged(msg.sender, currentDelegate, delegatee);
-        _moveDelegates(currentDelegate, delegatee, balanceOf(msg.sender));
+        _delegate(msg.sender, delegatee);
+    }
+
+    function _delegate(address delegator, address delegatee) internal {
+        address currentDelegate = delegates[delegator];
+        delegates[delegator] = delegatee;
+        emit DelegateChanged(delegator, currentDelegate, delegatee);
+        _moveDelegates(currentDelegate, delegatee, balanceOf(delegator));
     }
 
     function getPastVotes(address account, uint256 blockNumber) external view returns (uint256) {

@@ -69,6 +69,8 @@ interface DraftAsset {
   timestamp: string;
   collectionAddress?: string;
   tokenId?: number;
+  sha256Hash?: string;
+  sha256HashTruncated?: string;
 }
 
 interface CollectionRecord {
@@ -363,6 +365,7 @@ export default function DashboardPage() {
   const [newTraitRarity, setNewTraitRarity] = useState("10%");
   const [draftAssets, setDraftAssets] = useState<DraftAsset[]>([]);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  const [selectedTiers, setSelectedTiers] = useState<Record<string, number>>({});
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setValidationError(null);
@@ -410,6 +413,8 @@ export default function DashboardPage() {
 
       let imageUri = uploadedIpfsImageUri;
       let gatewayImgUrl = uploadedIpfsImageGateway;
+      let fileSha256Hash = "";
+      let fileSha256HashTruncated = "";
 
       if (creationMode === "upload" && selectedFile) {
         const formData = new FormData();
@@ -425,6 +430,8 @@ export default function DashboardPage() {
 
         imageUri = imgData.ipfsUrl;
         gatewayImgUrl = imgData.gatewayUrl;
+        fileSha256Hash = imgData.sha256Hash || "";
+        fileSha256HashTruncated = imgData.sha256HashTruncated || "";
         setUploadedIpfsImageUri(imageUri);
         setUploadedIpfsImageGateway(gatewayImgUrl);
         setImageUrl(gatewayImgUrl);
@@ -449,6 +456,7 @@ export default function DashboardPage() {
           attributes: formattedAttributes,
           external_url: nftExternalUrl.trim() || undefined,
           walletAddress: address || undefined,
+          contentHashCommitment: fileSha256HashTruncated || undefined,
         }),
       });
 
@@ -477,6 +485,8 @@ export default function DashboardPage() {
         status: "DRAFT",
         timestamp: new Date().toLocaleTimeString(),
         collectionAddress: selectedCollection,
+        sha256Hash: fileSha256Hash || undefined,
+        sha256HashTruncated: fileSha256HashTruncated || undefined,
       };
 
       setDraftAssets((prev) => [newDraft, ...prev]);
@@ -642,6 +652,10 @@ export default function DashboardPage() {
               setAiStatus(`Art generated & saved on IPFS! Ready to mint.`);
               addTerminalLog(`Art saved on IPFS: ${statusData.imageUrl}`);
 
+              const rawHash = statusData.imageHash || "";
+              const formattedHash = rawHash ? (rawHash.startsWith('0x') ? rawHash : '0x' + rawHash) : "";
+              const truncatedHash = formattedHash ? formattedHash.slice(0, 34) : "";
+
               const newDraft: DraftAsset = {
                 id: statusData.id,
                 imageUrl: statusData.imageUrl || statusData.imageUri,
@@ -657,6 +671,8 @@ export default function DashboardPage() {
                 status: "DRAFT",
                 timestamp: new Date().toLocaleTimeString(),
                 collectionAddress: selectedCollection,
+                sha256Hash: formattedHash || undefined,
+                sha256HashTruncated: truncatedHash || undefined,
               };
               setDraftAssets((prev) => [newDraft, ...prev]);
               setIsGenerating(false);
@@ -709,7 +725,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleMintDraft = async (draft: DraftAsset) => {
+  const handleMintDraft = async (draft: DraftAsset, tier: number = 0) => {
     if (!isConnected || !address) { addTerminalLog("Wallet not connected."); return; }
     if (!chainGuard.isCorrectChain) { addTerminalLog(`Wrong chain — please switch your wallet to ${chainGuard.requiredChainName}.`); return; }
 
@@ -723,7 +739,7 @@ export default function DashboardPage() {
     }
 
     setSelectedDraftId(draft.id);
-    addTerminalLog(`Initiating mint for "${draft.name}" on ${mintTargetContract}…`);
+    addTerminalLog(`Initiating mint for "${draft.name}" on ${mintTargetContract} (Tier: ${tier})…`);
     setDraftAssets((prev) =>
       prev.map((asset) => (asset.id === draft.id ? { ...asset, status: "MINTING" } : asset))
     );
@@ -752,12 +768,24 @@ export default function DashboardPage() {
       addTerminalLog(`Warning: Failed to create pending record: ${err.message}`);
     }
 
+    const valueMap: Record<number, string> = {
+      0: "0.005",
+      1: "0.01",
+      2: "0.02"
+    };
+    const priceStr = valueMap[tier] || "0.005";
+
+    let contentHash = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    if (tier === 2 && draft.sha256Hash) {
+      contentHash = draft.sha256Hash;
+    }
+
     mintTx.execute({
       address: mintTargetContract as `0x${string}`,
       abi: AINFTMinterABI,
       functionName: "mintAINFT",
-      args: [address, draft.metadataUrl],
-      value: parseEther("0.005"),
+      args: [address, draft.metadataUrl, tier, contentHash],
+      value: parseEther(priceStr),
     });
   };
 
@@ -1048,6 +1076,10 @@ export default function DashboardPage() {
     if (!isConnected) { addTerminalLog("Wallet not connected."); return; }
     if (!chainGuard.isCorrectChain) { addTerminalLog("Wrong chain — switch to Base Sepolia."); return; }
     if (!compiledResult?.bytecode) { addTerminalLog("No compiled bytecode — compile first."); return; }
+    if (compiledResult?.simulated) {
+      addTerminalLog("Deployment Blocked: WCOS contract templates are currently simulated. Real Solidity compilation and on-chain contract deployment will activate in Phase 2.");
+      return;
+    }
 
     addTerminalLog(`Deploying ${contractType} contract on ${chain?.name || "Base Sepolia"}…`);
     deployWeb3.execute({
@@ -1299,15 +1331,29 @@ export default function DashboardPage() {
                             <>
                               <ChainGuardBanner {...chainGuard} />
                               {chainGuard.isConnected && chainGuard.isCorrectChain && (
-                                <button
-                                  onClick={() => handleMintDraft(asset)}
-                                  disabled={mintTx.state.isLoading && selectedDraftId === asset.id}
-                                  className="w-full rounded-full bg-indigo-600 hover:bg-indigo-500 py-2 text-xs font-semibold text-white transition-all duration-200 disabled:opacity-50"
-                                >
-                                  {mintTx.state.isLoading && selectedDraftId === asset.id
-                                    ? getTxStatusLabel(mintTx.state.status, { pending_wallet: "Check wallet…", submitted: "Confirming…" })
-                                    : "Mint NFT"}
-                                </button>
+                                <div className="space-y-2">
+                                  <div className="space-y-1 text-left">
+                                    <label className="text-[9px] text-slate-500 font-bold uppercase block">Provenance Tier</label>
+                                    <select
+                                      value={selectedTiers[asset.id] ?? 0}
+                                      onChange={(e) => setSelectedTiers(prev => ({ ...prev, [asset.id]: Number(e.target.value) }))}
+                                      className="w-full rounded-xl border border-white/10 bg-slate-950 px-2 py-1.5 text-[11px] text-white outline-none focus:border-indigo-500"
+                                    >
+                                      <option value={0}>Basic (0.005 ETH) — Standard metadata url stored, no cryptographic content-hash registry</option>
+                                      <option value={1}>Standard (0.01 ETH) — Standard metadata off-chain hash, client-side content-hash verification</option>
+                                      <option value={2}>Full (0.02 ETH) — Highest cryptographic proof, 256-bit hash written directly to contract storage</option>
+                                    </select>
+                                  </div>
+                                  <button
+                                    onClick={() => handleMintDraft(asset, selectedTiers[asset.id] ?? 0)}
+                                    disabled={mintTx.state.isLoading && selectedDraftId === asset.id}
+                                    className="w-full rounded-full bg-indigo-600 hover:bg-indigo-500 py-2 text-xs font-semibold text-white transition-all duration-200 disabled:opacity-50"
+                                  >
+                                    {mintTx.state.isLoading && selectedDraftId === asset.id
+                                      ? getTxStatusLabel(mintTx.state.status, { pending_wallet: "Check wallet…", submitted: "Confirming…" })
+                                      : `Mint NFT (${(selectedTiers[asset.id] === 2 ? "0.02" : selectedTiers[asset.id] === 1 ? "0.01" : "0.005")} ETH)`}
+                                  </button>
+                                </div>
                               )}
                               {mintTx.state.status !== "idle" && selectedDraftId === asset.id && (
                                 <TxLifecycleBanner status={mintTx.state.status} txHash={mintTx.state.txHash} error={mintTx.state.error} />

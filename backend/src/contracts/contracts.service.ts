@@ -103,7 +103,8 @@ contract CustomWcosContract {
       abi,
       bytecode: mockBytecode,
       solidityVersion: '0.8.20',
-      sourceCode
+      sourceCode,
+      simulated: true
     };
   }
 }

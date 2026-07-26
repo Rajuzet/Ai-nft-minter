@@ -5,6 +5,8 @@ import { BlockchainPortfolioProvider } from './blockchain-portfolio-provider.ser
 import { LlamaPriceProvider } from './llama-price-provider.service';
 import { UniswapLPAdapter, AaveLendingAdapter } from './protocol-adapters';
 import { OpenOceanSwapProvider } from './openocean-swap-provider.service';
+import { ZeroxSwapProvider } from './zerox-swap-provider.service';
+import { OneInchSwapProvider } from './oneinch-swap-provider.service';
 
 @Module({
   controllers: [DefiController],
@@ -15,6 +17,8 @@ import { OpenOceanSwapProvider } from './openocean-swap-provider.service';
     UniswapLPAdapter,
     AaveLendingAdapter,
     OpenOceanSwapProvider,
+    ZeroxSwapProvider,
+    OneInchSwapProvider,
   ],
   exports: [DefiService],
 })

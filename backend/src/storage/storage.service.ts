@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import * as crypto from 'crypto';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -7,6 +8,8 @@ export interface IpfsUploadResponse {
   ipfsHash: string;
   ipfsUrl: string;
   gatewayUrl: string;
+  sha256Hash?: string;
+  sha256HashTruncated?: string;
 }
 
 export interface NFTTrait {
@@ -69,6 +72,10 @@ export class StorageService {
       throw new BadRequestException('Image file buffer cannot be empty.');
     }
 
+    const sha256Hex = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    const sha256Hash = '0x' + sha256Hex;
+    const sha256HashTruncated = '0x' + sha256Hex.slice(0, 32);
+
     const headers = this.getPinataHeaders();
     const gatewayBase = this.getGatewayBaseUrl();
 
@@ -105,7 +112,13 @@ export class StorageService {
         const gatewayUrl = `${gatewayBase}${ipfsHash}`;
 
         this.logger.log(`Image pinned successfully to IPFS. Hash: ${ipfsHash}`);
-        return { ipfsHash, ipfsUrl, gatewayUrl };
+        return {
+          ipfsHash,
+          ipfsUrl,
+          gatewayUrl,
+          sha256Hash,
+          sha256HashTruncated,
+        };
       } catch (error: any) {
         this.logger.error(`Failed to pin image to Pinata IPFS: ${error.message}`);
         throw new InternalServerErrorException(`Pinata IPFS Image Upload Failed: ${error.message}`);

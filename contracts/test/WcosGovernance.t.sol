@@ -86,18 +86,20 @@ contract WcosGovernanceTest is Test {
     }
 
     function testProposalSucceeded() public {
-        vm.startPrank(memberA);
+        vm.prank(memberA);
         token.delegate(memberA);
-        vm.roll(block.number + 1);
-        uint256 proposalId = governor.propose(address(0), 0, "", "Winning proposal");
-        governor.castVote(proposalId, true);
-        vm.stopPrank();
-
-        vm.startPrank(memberB);
+        vm.prank(memberB);
         token.delegate(memberB);
         vm.roll(block.number + 1);
+
+        vm.prank(memberA);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Winning proposal");
+        
+        vm.prank(memberA);
         governor.castVote(proposalId, true);
-        vm.stopPrank();
+
+        vm.prank(memberB);
+        governor.castVote(proposalId, true);
 
         vm.roll(block.number + VOTING_DURATION + 1);
         assertEq(uint256(governor.state(proposalId)), uint256(WcosGovernor.ProposalState.Succeeded));
@@ -170,18 +172,20 @@ contract WcosGovernanceTest is Test {
     }
 
     function testExecuteInformationalProposal() public {
-        vm.startPrank(memberA);
+        vm.prank(memberA);
         token.delegate(memberA);
-        vm.roll(block.number + 1);
-        uint256 proposalId = governor.propose(address(0), 0, "", "Informational proposal");
-        governor.castVote(proposalId, true);
-        vm.stopPrank();
-
-        vm.startPrank(memberB);
+        vm.prank(memberB);
         token.delegate(memberB);
         vm.roll(block.number + 1);
+
+        vm.prank(memberA);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Informational proposal");
+        
+        vm.prank(memberA);
         governor.castVote(proposalId, true);
-        vm.stopPrank();
+
+        vm.prank(memberB);
+        governor.castVote(proposalId, true);
 
         vm.roll(block.number + VOTING_DURATION + 1);
         governor.execute(proposalId);
@@ -189,18 +193,20 @@ contract WcosGovernanceTest is Test {
     }
 
     function testDuplicateExecuteReverts() public {
-        vm.startPrank(memberA);
+        vm.prank(memberA);
         token.delegate(memberA);
-        vm.roll(block.number + 1);
-        uint256 proposalId = governor.propose(address(0), 0, "", "Dup execute test");
-        governor.castVote(proposalId, true);
-        vm.stopPrank();
-
-        vm.startPrank(memberB);
+        vm.prank(memberB);
         token.delegate(memberB);
         vm.roll(block.number + 1);
+
+        vm.prank(memberA);
+        uint256 proposalId = governor.propose(address(0), 0, "", "Dup execute test");
+        
+        vm.prank(memberA);
         governor.castVote(proposalId, true);
-        vm.stopPrank();
+
+        vm.prank(memberB);
+        governor.castVote(proposalId, true);
 
         vm.roll(block.number + VOTING_DURATION + 1);
         governor.execute(proposalId);
@@ -399,18 +405,20 @@ contract WcosGovernanceTest is Test {
         tLock.grantRole(tLock.EXECUTOR_ROLE(), address(0));
         vm.stopPrank();
 
-        vm.startPrank(memberA);
+        vm.prank(memberA);
         token.delegate(memberA);
-        vm.roll(block.number + 1);
-        uint256 proposalId = tGov.propose(address(0), 0, "", "Timelock test");
-        tGov.castVote(proposalId, true);
-        vm.stopPrank();
-
-        vm.startPrank(memberB);
+        vm.prank(memberB);
         token.delegate(memberB);
         vm.roll(block.number + 1);
+
+        vm.prank(memberA);
+        uint256 proposalId = tGov.propose(address(0), 0, "", "Timelock test");
+        
+        vm.prank(memberA);
         tGov.castVote(proposalId, true);
-        vm.stopPrank();
+
+        vm.prank(memberB);
+        tGov.castVote(proposalId, true);
 
         vm.roll(block.number + VOTING_DURATION + 1);
         assertEq(uint256(tGov.state(proposalId)), uint256(WcosGovernor.ProposalState.Succeeded));
